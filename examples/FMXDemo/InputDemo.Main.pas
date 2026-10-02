@@ -6,7 +6,7 @@ uses
   System.SysUtils, System.Classes, System.Generics.Collections,
   FMX.Types, FMX.Controls, FMX.Forms, FMX.Layouts, FMX.StdCtrls,
   FMX.ListBox, FMX.Grid, FMX.Grid.Style, FMX.ScrollBox, FMX.Memo,
-  FMX.Controls.Presentation, FMX.Objects, FMXInput;
+  FMX.Controls.Presentation, FMX.Objects, FMXInput, System.Rtti, FMX.Memo.Types;
 
 type
   TInputDemoForm = class(TForm)
