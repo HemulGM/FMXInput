@@ -80,3 +80,7 @@ __recovery/
 
 # Boss dependency manager vendor folder https://github.com/HashLoad/boss
 modules/
+
+# FMXInput standalone builds and example profiles
+/build/
+/input-profile.json
