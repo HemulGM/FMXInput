@@ -1,0 +1,45 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{87AC6416-5069-4BDB-A928-A8670C94730E}</ProjectGuid>
+    <ProjectVersion>20.4</ProjectVersion>
+    <MainSource>FMXInputDemo.dpr</MainSource>
+    <ProjectName>FMXInputDemo</ProjectName>
+    <FrameworkType>FMX</FrameworkType>
+    <AppType>Application</AppType>
+    <Base>true</Base>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <Platform Condition="'$(Platform)'==''">Win64</Platform>
+    <TargetedPlatforms>132227</TargetedPlatforms>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Base)'!=''">
+    <DCC_UnitSearchPath>..\..;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_DcuOutput>..\..\build\FMXDemo\$(Platform)\$(Config)</DCC_DcuOutput>
+    <DCC_ExeOutput>..\..\build\FMXDemo\$(Platform)\$(Config)</DCC_ExeOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug'">
+    <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+    <DCC_Optimize>false</DCC_Optimize>
+    <DCC_RangeChecking>true</DCC_RangeChecking>
+    <DCC_IntegerOverflowCheck>true</DCC_IntegerOverflowCheck>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="$(MainSource)"><MainSource>MainSource</MainSource></DelphiCompile>
+    <DCCReference Include="InputDemo.Main.pas"><Form>InputDemoForm</Form></DCCReference>
+    <DCCReference Include="..\..\FMXInput.pas"/>
+    <DCCReference Include="..\..\FMXInput.Windows.pas"/>
+    <DCCReference Include="..\..\FMXInput.Linux.pas"/>
+    <DCCReference Include="..\..\FMXInput.MacOS.pas"/>
+    <BuildConfiguration Include="Debug"><Key>Cfg_1</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+    <BuildConfiguration Include="Release"><Key>Cfg_2</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Delphi.Personality.12</Borland.Personality>
+    <Borland.ProjectType>FMX</Borland.ProjectType>
+    <BorlandProject><Platforms>
+      <Platform value="Win32">True</Platform><Platform value="Win64">True</Platform>
+      <Platform value="Linux64">True</Platform><Platform value="OSX64">True</Platform>
+      <Platform value="OSXARM64">True</Platform>
+    </Platforms></BorlandProject>
+  </ProjectExtensions>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+</Project>

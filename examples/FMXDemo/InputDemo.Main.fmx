@@ -1,0 +1,217 @@
+object InputDemoForm: TInputDemoForm
+  Caption = 'FMXInput - Device capture'
+  ClientHeight = 740
+  ClientWidth = 1120
+  Position = ScreenCenter
+  FormFactor.Width = 1120
+  FormFactor.Height = 740
+  FormFactor.Devices = [Desktop]
+  OnActivate = FormActivate
+  OnCreate = FormCreate
+  OnDeactivate = FormDeactivate
+  OnDestroy = FormDestroy
+  object RootLayout: TLayout
+    Align = Client
+    Padding.Left = 24.000000000000000000
+    Padding.Top = 20.000000000000000000
+    Padding.Right = 24.000000000000000000
+    Padding.Bottom = 20.000000000000000000
+    Size.Width = 1120.000000000000000000
+    Size.Height = 740.000000000000000000
+    Size.PlatformDefault = False
+    object BackgroundRect: TRectangle
+      Align = Contents
+      HitTest = False
+      Fill.Color = xFFF3F4F6
+      Stroke.Kind = None
+    end
+    object HeaderLayout: TLayout
+      Align = Top
+      Size.Width = 1072.000000000000000000
+      Size.Height = 70.000000000000000000
+      Size.PlatformDefault = False
+      object TitleLabel: TLabel
+        Align = Top
+        Size.Width = 1072.000000000000000000
+        Size.Height = 36.000000000000000000
+        Size.PlatformDefault = False
+        StyledSettings = [Family, FontColor]
+        TextSettings.Font.Size = 24.000000000000000000
+        TextSettings.Font.Style = [fsBold]
+        Text = 'Physical input devices'
+      end
+      object SubtitleLabel: TLabel
+        Align = Client
+        Text = 'Select a device to inspect its controls and capture a key, button or axis.'
+      end
+    end
+    object DeviceLayout: TLayout
+      Align = Top
+      Size.Width = 1072.000000000000000000
+      Size.Height = 74.000000000000000000
+      Size.PlatformDefault = False
+      object DeviceLabel: TLabel
+        Align = Top
+        Size.Height = 24.000000000000000000
+        Size.PlatformDefault = False
+        Text = 'Input source'
+      end
+      object DeviceRow: TLayout
+        Align = Top
+        Size.Height = 38.000000000000000000
+        Size.PlatformDefault = False
+        object RefreshButton: TButton
+          Align = Right
+          Margins.Left = 12.000000000000000000
+          Size.Width = 100.000000000000000000
+          Size.PlatformDefault = False
+          Text = 'Refresh'
+          OnClick = RefreshButtonClick
+        end
+        object DeviceCombo: TComboBox
+          Align = Client
+          OnChange = DeviceComboChange
+        end
+      end
+    end
+    object DeviceInfoLayout: TLayout
+      Align = Top
+      Size.Height = 84.000000000000000000
+      Size.PlatformDefault = False
+      object DeviceIdLabel: TLabel
+        Align = Top
+        Size.Height = 50.000000000000000000
+        Size.PlatformDefault = False
+        Text = 'No input device selected.'
+        WordWrap = True
+      end
+      object DeviceStatusLabel: TLabel
+        Align = Client
+        Text = 'Initializing input...'
+        WordWrap = True
+      end
+    end
+    object FooterLayout: TLayout
+      Align = Bottom
+      Margins.Top = 16.000000000000000000
+      Size.Height = 116.000000000000000000
+      Size.PlatformDefault = False
+      object HeldLabel: TLabel
+        Align = Top
+        Size.Height = 28.000000000000000000
+        Size.PlatformDefault = False
+        Text = 'Held keys / buttons: none'
+      end
+      object CaptureRow: TLayout
+        Align = Top
+        Size.Height = 38.000000000000000000
+        Size.PlatformDefault = False
+        object CaptureButton: TButton
+          Align = Left
+          Size.Width = 164.000000000000000000
+          Size.PlatformDefault = False
+          CanFocus = False
+          Text = 'Capture next input'
+          OnClick = CaptureButtonClick
+        end
+        object CancelButton: TButton
+          Align = Left
+          Margins.Left = 8.000000000000000000
+          Size.Width = 80.000000000000000000
+          Size.PlatformDefault = False
+          CanFocus = False
+          Enabled = False
+          Text = 'Cancel'
+          OnClick = CancelButtonClick
+        end
+        object CaptureLabel: TLabel
+          Align = Client
+          Margins.Left = 16.000000000000000000
+          Text = 'Release controls, then choose Capture next input.'
+          WordWrap = True
+        end
+      end
+      object BindingStateLabel: TLabel
+        Align = Client
+        Margins.Top = 8.000000000000000000
+        Text = 'Captured action: not assigned'
+      end
+    end
+    object MainLayout: TLayout
+      Align = Client
+      object ControlsLayout: TLayout
+        Align = Left
+        Size.Width = 510.000000000000000000
+        Size.PlatformDefault = False
+        object ControlsLabel: TLabel
+          Align = Top
+          Size.Height = 30.000000000000000000
+          Size.PlatformDefault = False
+          Text = 'Live control values'
+        end
+        object ValuesGrid: TStringGrid
+          Align = Client
+          RowCount = 0
+          Options = [AlternatingRowBackground, ColumnResize, ColLines, RowLines, RowSelect, Header]
+          object KindColumn: TStringColumn
+            Header = 'Kind'
+            Width = 70.000000000000000000
+          end
+          object NameColumn: TStringColumn
+            Header = 'Control'
+            Width = 180.000000000000000000
+          end
+          object CodeColumn: TStringColumn
+            Header = 'Code'
+            Width = 70.000000000000000000
+          end
+          object ValueColumn: TStringColumn
+            Header = 'Value'
+            Width = 140.000000000000000000
+          end
+        end
+      end
+      object Splitter: TSplitter
+        Align = Left
+        Margins.Left = 10.000000000000000000
+        Margins.Right = 10.000000000000000000
+        Size.Width = 4.000000000000000000
+        Size.PlatformDefault = False
+      end
+      object EventsLayout: TLayout
+        Align = Client
+        object EventsHeader: TLayout
+          Align = Top
+          Size.Height = 30.000000000000000000
+          Size.PlatformDefault = False
+          object ClearLogButton: TButton
+            Align = Right
+            Margins.Bottom = 4.000000000000000000
+            Size.Width = 84.000000000000000000
+            Size.PlatformDefault = False
+            Text = 'Clear log'
+            OnClick = ClearLogButtonClick
+          end
+          object EventsLabel: TLabel
+            Align = Client
+            Text = 'Events from selected source'
+          end
+        end
+        object EventsMemo: TMemo
+          Align = Client
+          ReadOnly = True
+          WordWrap = False
+          StyledSettings = [Size, Style, FontColor]
+          TextSettings.Font.Family = 'Consolas'
+        end
+      end
+    end
+  end
+  object PollTimer: TTimer
+    Enabled = False
+    Interval = 8
+    OnTimer = PollTimerTimer
+    Left = 32
+    Top = 32
+  end
+end

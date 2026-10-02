@@ -150,6 +150,46 @@ can also restrict access. This backend reads devices exposed as usable HID;
 it does not implement vendor-specific report protocols or a GameController
 fallback for controllers that expose only that framework's API.
 
+## FMX device capture demo
+
+Open `examples/FMXDemo/FMXInputDemo.dproj` in RAD Studio. The entire interface
+is defined in `InputDemo.Main.fmx` and can be edited in the form designer.
+The Pascal unit populates device/control data and handles input; it does not
+create UI controls. The project uses only FMX and the library's native backends,
+with no dependency on RetroMul or SDL.
+
+Select a keyboard or controller in **Input source**. The grid shows its controls
+and current values; the log records changes only from that selected device.
+**Capture next input** assigns a key, button, axis direction or D-pad direction
+to a demonstration action. Its pressed/released state appears below the capture
+button. Release previously held controls before capture. **Cancel** stops capture;
+**Clear log** clears the displayed history. Axis changes below 0.05 are omitted
+from the log to limit noise, while the grid continues to display their values.
+
+Input pauses and held states clear when the window loses focus. Switching
+devices clears the captured action. Unplugging the selected device leaves the
+selection empty; devices refresh automatically and through **Refresh**.
+Keyboard entries represent native HID interfaces, so a physical keyboard may
+have several entries. The selected device's full ID is displayed to distinguish
+them. Linux requires access to `/dev/input/event*`; macOS may require Input
+Monitoring permission. Linux FMX builds additionally need FMXLinux and a
+configured target SDK; macOS builds need the corresponding RAD Studio SDK.
+
+Build both Windows demos and run the FMX resource/interaction regression tests:
+
+```powershell
+./tests/Build.ps1 -Targets Win32,Win64 -FMXDemo
+```
+
+Executables are written to `build/Win32` and `build/Win64`. `FMXDemoTests` loads
+the real `.fmx` with a fake backend and verifies selection, foreign-device
+filtering, capture, keyboard/gamepad display, release, focus loss and disconnect.
+The interactive `FMXInputDemo` executable is built without being launched by
+the script. Native Linux/macOS demo execution must be tested on those systems.
+The form unit compiles for Linux64, macOS Intel and macOS ARM64. Win32/Win64
+demo builds and regression tests pass; the Win64 form was also opened and polled
+with the real Windows backend. A physical gamepad was not attached during testing.
+
 ## Build and validation
 
 From a Windows PowerShell with Delphi command-line compilers on PATH:

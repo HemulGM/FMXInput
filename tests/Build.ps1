@@ -2,6 +2,7 @@ param(
     [ValidateSet('Win32', 'Win64', 'Linux64', 'OSX64', 'OSXARM64')]
     [string[]] $Targets = @('Win32', 'Win64', 'Linux64', 'OSX64', 'OSXARM64'),
     [switch] $NativeProbe,
+    [switch] $FMXDemo,
     [string] $OutputDirectory = ''
 )
 
@@ -29,15 +30,21 @@ foreach ($taskTarget in $Targets) {
     if ($taskTarget -notin @('Win32', 'Win64')) { continue }
     $taskPrograms = @('tests\InputTests.dpr')
     if ($NativeProbe) { $taskPrograms += 'examples\InputProbe.dpr' }
+    if ($FMXDemo) { $taskPrograms += 'tests\FMXDemoTests.dpr', 'examples\FMXDemo\FMXInputDemo.dpr' }
     foreach ($taskProgram in $taskPrograms) {
         $taskName = [IO.Path]::GetFileNameWithoutExtension($taskProgram)
-        $taskLog = & $taskCompiler @taskFlags "-E$taskOutput" (Join-Path $taskRoot $taskProgram)
+        $taskProgramPath = Join-Path $taskRoot $taskProgram
+        Push-Location (Split-Path -Parent $taskProgramPath)
+        try {
+            $taskLog = & $taskCompiler @taskFlags "-E$taskOutput" $taskProgramPath
+        } finally { Pop-Location }
         $taskStatus = $LASTEXITCODE
         $taskLog | Set-Content -LiteralPath (Join-Path $taskOutput "$taskName.log")
         if ($taskStatus -ne 0 -or $taskLog -match '\b(Hint|Warning|Error|Fatal):') {
             $taskLog | Write-Output
             throw "$taskTarget $taskName compilation failed or produced diagnostics"
         }
+        if ($taskName -eq 'FMXInputDemo') { continue }
         & (Join-Path $taskOutput "$taskName.exe")
         if ($LASTEXITCODE -ne 0) { throw "$taskTarget $taskName failed" }
     }
