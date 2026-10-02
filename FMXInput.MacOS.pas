@@ -2,7 +2,8 @@
 
 interface
 
-uses FMXInput;
+uses
+  FMXInput;
 
 {$IF Defined(MACOS) and not Defined(IOS)}
 type
@@ -20,51 +21,52 @@ type
 implementation
 
 {$IF Defined(MACOS) and not Defined(IOS)}
+
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections, Macapi.CoreFoundation;
+  System.SysUtils, System.Classes, System.Generics.Collections,
+  Macapi.CoreFoundation;
 
 const
   IOKitLib = '/System/Library/Frameworks/IOKit.framework/IOKit';
 
 // Public C API declarations; no Objective-C helper or external wrapper needed.
-function HIDManagerCreate(Allocator: Pointer; Options: Cardinal): Pointer; cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerCreate';
-function HIDManagerOpen(Manager: Pointer; Options: Cardinal): Integer; cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerOpen';
-function HIDManagerClose(Manager: Pointer; Options: Cardinal): Integer; cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerClose';
-procedure HIDManagerMatch(Manager, Dictionaries: Pointer); cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerSetDeviceMatchingMultiple';
-function HIDManagerCopyDevices(Manager: Pointer): CFSetRef; cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerCopyDevices';
-procedure HIDManagerSchedule(Manager: Pointer; RunLoop: CFRunLoopRef; Mode: CFStringRef); cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerScheduleWithRunLoop';
-procedure HIDManagerUnschedule(Manager: Pointer; RunLoop: CFRunLoopRef; Mode: CFStringRef); cdecl;
-  external IOKitLib name _PU + 'IOHIDManagerUnscheduleFromRunLoop';
-function HIDDeviceProperty(Device: Pointer; Key: CFStringRef): CFTypeRef; cdecl;
-  external IOKitLib name _PU + 'IOHIDDeviceGetProperty';
-function HIDDeviceConforms(Device: Pointer; UsagePage, Usage: Cardinal): Boolean; cdecl;
-  external IOKitLib name _PU + 'IOHIDDeviceConformsTo';
-function HIDDeviceOpen(Device: Pointer; Options: Cardinal): Integer; cdecl;
-  external IOKitLib name _PU + 'IOHIDDeviceOpen';
-function HIDDeviceCopyElements(Device, Matching: Pointer; Options: Cardinal): CFArrayRef; cdecl;
-  external IOKitLib name _PU + 'IOHIDDeviceCopyMatchingElements';
-function HIDDeviceValue(Device, Element: Pointer; out Value: Pointer): Integer; cdecl;
-  external IOKitLib name _PU + 'IOHIDDeviceGetValue';
-function HIDElementType(Element: Pointer): Cardinal; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetType';
-function HIDElementPage(Element: Pointer): Cardinal; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetUsagePage';
-function HIDElementUsage(Element: Pointer): Cardinal; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetUsage';
-function HIDElementCookie(Element: Pointer): Cardinal; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetCookie';
-function HIDElementMinimum(Element: Pointer): NativeInt; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetLogicalMin';
-function HIDElementMaximum(Element: Pointer): NativeInt; cdecl;
-  external IOKitLib name _PU + 'IOHIDElementGetLogicalMax';
-function HIDValueInteger(Value: Pointer): NativeInt; cdecl;
-  external IOKitLib name _PU + 'IOHIDValueGetIntegerValue';
+function HIDManagerCreate(Allocator: Pointer; Options: Cardinal): Pointer; cdecl; external IOKitLib name _PU + 'IOHIDManagerCreate';
+
+function HIDManagerOpen(Manager: Pointer; Options: Cardinal): Integer; cdecl; external IOKitLib name _PU + 'IOHIDManagerOpen';
+
+function HIDManagerClose(Manager: Pointer; Options: Cardinal): Integer; cdecl; external IOKitLib name _PU + 'IOHIDManagerClose';
+
+procedure HIDManagerMatch(Manager, Dictionaries: Pointer); cdecl; external IOKitLib name _PU + 'IOHIDManagerSetDeviceMatchingMultiple';
+
+function HIDManagerCopyDevices(Manager: Pointer): CFSetRef; cdecl; external IOKitLib name _PU + 'IOHIDManagerCopyDevices';
+
+procedure HIDManagerSchedule(Manager: Pointer; RunLoop: CFRunLoopRef; Mode: CFStringRef); cdecl; external IOKitLib name _PU + 'IOHIDManagerScheduleWithRunLoop';
+
+procedure HIDManagerUnschedule(Manager: Pointer; RunLoop: CFRunLoopRef; Mode: CFStringRef); cdecl; external IOKitLib name _PU + 'IOHIDManagerUnscheduleFromRunLoop';
+
+function HIDDeviceProperty(Device: Pointer; Key: CFStringRef): CFTypeRef; cdecl; external IOKitLib name _PU + 'IOHIDDeviceGetProperty';
+
+function HIDDeviceConforms(Device: Pointer; UsagePage, Usage: Cardinal): Boolean; cdecl; external IOKitLib name _PU + 'IOHIDDeviceConformsTo';
+
+function HIDDeviceOpen(Device: Pointer; Options: Cardinal): Integer; cdecl; external IOKitLib name _PU + 'IOHIDDeviceOpen';
+
+function HIDDeviceCopyElements(Device, Matching: Pointer; Options: Cardinal): CFArrayRef; cdecl; external IOKitLib name _PU + 'IOHIDDeviceCopyMatchingElements';
+
+function HIDDeviceValue(Device, Element: Pointer; out Value: Pointer): Integer; cdecl; external IOKitLib name _PU + 'IOHIDDeviceGetValue';
+
+function HIDElementType(Element: Pointer): Cardinal; cdecl; external IOKitLib name _PU + 'IOHIDElementGetType';
+
+function HIDElementPage(Element: Pointer): Cardinal; cdecl; external IOKitLib name _PU + 'IOHIDElementGetUsagePage';
+
+function HIDElementUsage(Element: Pointer): Cardinal; cdecl; external IOKitLib name _PU + 'IOHIDElementGetUsage';
+
+function HIDElementCookie(Element: Pointer): Cardinal; cdecl; external IOKitLib name _PU + 'IOHIDElementGetCookie';
+
+function HIDElementMinimum(Element: Pointer): NativeInt; cdecl; external IOKitLib name _PU + 'IOHIDElementGetLogicalMin';
+
+function HIDElementMaximum(Element: Pointer): NativeInt; cdecl; external IOKitLib name _PU + 'IOHIDElementGetLogicalMax';
+
+function HIDValueInteger(Value: Pointer): NativeInt; cdecl; external IOKitLib name _PU + 'IOHIDValueGetIntegerValue';
 
 type
   TMacElement = record
@@ -72,6 +74,7 @@ type
     Info: TInputElement;
     Minimum, Maximum: NativeInt;
   end;
+
   TMacDevice = class
     Ref: Pointer;
     AllElements: CFArrayRef;
@@ -80,6 +83,7 @@ type
     Seen: Boolean;
     destructor Destroy; override;
   end;
+
   TMacState = class
     Manager: Pointer;
     RunLoop: CFRunLoopRef;
@@ -102,7 +106,9 @@ begin
     var Value := HIDDeviceProperty(Device, Key);
     if (Value <> nil) and (CFGetTypeID(Value) = CFNumberGetTypeID) then
       CFNumberGetValue(CFNumberRef(Value), kCFNumberSInt64Type, @Result);
-  finally CFRelease(Key); end;
+  finally
+    CFRelease(Key);
+  end;
 end;
 
 function DeviceString(Device: Pointer; const Name: string): string;
@@ -111,11 +117,14 @@ begin
   var Key := MakeString(Name);
   try
     var Value := HIDDeviceProperty(Device, Key);
-    if (Value = nil) or (CFGetTypeID(Value) <> CFStringGetTypeID) then Exit;
+    if (Value = nil) or (CFGetTypeID(Value) <> CFStringGetTypeID) then
+      Exit;
     var Buffer: array[0..4095] of AnsiChar;
     if CFStringGetCString(CFStringRef(Value), @Buffer[0], SizeOf(Buffer), kCFStringEncodingUTF8) then
       Result := UTF8ToString(PAnsiChar(@Buffer[0]));
-  finally CFRelease(Key); end;
+  finally
+    CFRelease(Key);
+  end;
 end;
 
 constructor TMacState.Create;
@@ -123,7 +132,8 @@ begin
   inherited;
   Devices := TObjectList<TMacDevice>.Create;
   Manager := HIDManagerCreate(nil, 0);
-  if Manager = nil then raise EInvalidOperation.Create('IOHIDManagerCreate failed');
+  if Manager = nil then
+    raise EInvalidOperation.Create('IOHIDManagerCreate failed');
   var ArrayCallbacks := kCFTypeArrayCallBacks;
   var KeyCallbacks := kCFTypeDictionaryKeyCallBacks;
   var ValueCallbacks := kCFTypeDictionaryValueCallBacks;
@@ -145,13 +155,19 @@ begin
           CFDictionarySetValue(Match, UsageKey, UsageNumber);
           CFArrayAppendValue(Matches, Match);
         finally
-          CFRelease(PageKey); CFRelease(UsageKey);
-          CFRelease(PageNumber); CFRelease(UsageNumber);
+          CFRelease(PageKey);
+          CFRelease(UsageKey);
+          CFRelease(PageNumber);
+          CFRelease(UsageNumber);
         end;
-      finally CFRelease(Match); end;
+      finally
+        CFRelease(Match);
+      end;
     end;
     HIDManagerMatch(Manager, Matches);
-  finally CFRelease(Matches); end;
+  finally
+    CFRelease(Matches);
+  end;
   RunLoop := CFRunLoopGetCurrent;
   HIDManagerSchedule(Manager, RunLoop, kCFRunLoopDefaultMode);
   // A denied keyboard must not prevent enumeration of accessible controllers.
@@ -161,8 +177,10 @@ end;
 
 destructor TMacDevice.Destroy;
 begin
-  if AllElements <> nil then CFRelease(AllElements);
-  if Ref <> nil then CFRelease(Ref);
+  if AllElements <> nil then
+    CFRelease(AllElements);
+  if Ref <> nil then
+    CFRelease(Ref);
   inherited;
 end;
 
@@ -171,16 +189,25 @@ begin
   Devices.Free;
   if Manager <> nil then
   begin
-    if RunLoop <> nil then HIDManagerUnschedule(Manager, RunLoop, kCFRunLoopDefaultMode);
-    HIDManagerClose(Manager, 0); CFRelease(Manager);
+    if RunLoop <> nil then
+      HIDManagerUnschedule(Manager, RunLoop, kCFRunLoopDefaultMode);
+    HIDManagerClose(Manager, 0);
+    CFRelease(Manager);
   end;
   inherited;
 end;
 
 constructor TMacOSInputBackend.Create;
-begin inherited; FImpl := TMacState.Create; end;
+begin
+  inherited;
+  FImpl := TMacState.Create;
+end;
+
 destructor TMacOSInputBackend.Destroy;
-begin FImpl.Free; inherited; end;
+begin
+  FImpl.Free;
+  inherited;
+end;
 
 procedure TMacOSInputBackend.Refresh;
 begin
@@ -189,20 +216,25 @@ begin
   CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, True);
   var SetRef := HIDManagerCopyDevices(State.Manager);
   try
-    for var Device in State.Devices do Device.Seen := False;
+    for var Device in State.Devices do
+      Device.Seen := False;
     if SetRef <> nil then
     begin
       var Refs: TArray<Pointer>;
       SetLength(Refs, CFSetGetCount(SetRef));
-      if Length(Refs) > 0 then CFSetGetValues(SetRef, @Refs[0]);
+      if Length(Refs) > 0 then
+        CFSetGetValues(SetRef, @Refs[0]);
       for var Ref in Refs do
       begin
         var Existing: TMacDevice := nil;
-        for var Device in State.Devices do if Device.Ref = Ref then Existing := Device;
+        for var Device in State.Devices do
+          if Device.Ref = Ref then
+            Existing := Device;
         if Existing <> nil then
         begin
           Existing.Seen := True;
-          if not Existing.Info.Available then HIDDeviceOpen(Ref, 0);
+          if not Existing.Info.Available then
+            HIDDeviceOpen(Ref, 0);
           Continue;
         end;
         var Device := TMacDevice.Create;
@@ -213,17 +245,22 @@ begin
           Device.Info.VendorId := Word(DeviceNumber(Ref, 'VendorID') and $FFFF);
           Device.Info.ProductId := Word(DeviceNumber(Ref, 'ProductID') and $FFFF);
           var Identity := Device.Info.Serial;
-          if Identity = '' then Identity := IntToHex(DeviceNumber(Ref, 'LocationID'), 8);
+          if Identity = '' then
+            Identity := IntToHex(DeviceNumber(Ref, 'LocationID'), 8);
           Device.Info.Id := 'macos:hid:' + IntToHex(Device.Info.VendorId, 4) + ':' +
             IntToHex(Device.Info.ProductId, 4) + ':' + Identity + ':' +
             IntToStr(DeviceNumber(Ref, 'PrimaryUsage'));
           for var Other in State.Devices do
-            if Other.Info.Id = Device.Info.Id then Device.Info.Id := Device.Info.Id + ':' + IntToHex(NativeUInt(Ref), 16);
-          if HIDDeviceConforms(Ref, 1, 6) then Device.Info.Kind := TInputDeviceKind.Keyboard
-          else Device.Info.Kind := TInputDeviceKind.Controller;
+            if Other.Info.Id = Device.Info.Id then
+              Device.Info.Id := Device.Info.Id + ':' + IntToHex(NativeUInt(Ref), 16);
+          if HIDDeviceConforms(Ref, 1, 6) then
+            Device.Info.Kind := TInputDeviceKind.Keyboard
+          else
+            Device.Info.Kind := TInputDeviceKind.Controller;
           var Status := HIDDeviceOpen(Ref, 0);
           Device.Info.Available := Status = 0;
-          if Status <> 0 then Device.Info.Error := Format('IOHIDDeviceOpen %.8x; check Input Monitoring/device access', [Cardinal(Status)]);
+          if Status <> 0 then
+            Device.Info.Error := Format('IOHIDDeviceOpen %.8x; check Input Monitoring/device access', [Cardinal(Status)]);
           Device.AllElements := HIDDeviceCopyElements(Ref, nil, 0);
           if Device.AllElements <> nil then
             for var I := 0 to CFArrayGetCount(Device.AllElements) - 1 do
@@ -233,13 +270,15 @@ begin
               var ElementType := HIDElementType(Element.Ref);
               var Page := HIDElementPage(Element.Ref);
               var Usage := HIDElementUsage(Element.Ref);
-              if (ElementType < 1) or (ElementType > 4) then Continue; // input elements only
+              if (ElementType < 1) or (ElementType > 4) then
+                Continue; // input elements only
               Element.Minimum := HIDElementMinimum(Element.Ref);
               Element.Maximum := HIDElementMaximum(Element.Ref);
               Element.Info.Code := Integer(HIDElementCookie(Element.Ref) and $7FFFFFFF);
               if (Page = 7) and (Usage >= 4) and (Usage <= 231) then
               begin
-                Element.Info.Kind := TInputElementKind.Key; Element.Info.Code := Usage;
+                Element.Info.Kind := TInputElementKind.Key;
+                Element.Info.Code := Usage;
                 Element.Info.Name := InputKeyName(Usage);
               end
               else if Page = 9 then
@@ -249,25 +288,37 @@ begin
               end
               else if (Page = 1) and (Usage = $39) then
               begin
-                Element.Info.Kind := TInputElementKind.Hat; Element.Info.Name := 'D-pad';
+                Element.Info.Kind := TInputElementKind.Hat;
+                Element.Info.Name := 'D-pad';
               end
               else if (Page = 1) and (Usage >= $30) and (Usage <= $38) then
               begin
-                Element.Info.Kind := TInputElementKind.Axis; Element.Info.Name := 'Axis ' + IntToStr(Usage);
+                Element.Info.Kind := TInputElementKind.Axis;
+                Element.Info.Name := 'Axis ' + IntToStr(Usage);
               end
-              else Continue;
+              else
+                Continue;
               Device.Elements := Device.Elements + [Element];
               Device.Info.Elements := Device.Info.Elements + [Element.Info];
             end;
-          Device.Seen := True; State.Devices.Add(Device); Device := nil;
-        finally Device.Free; end;
+          Device.Seen := True;
+          State.Devices.Add(Device);
+          Device := nil;
+        finally
+          Device.Free;
+        end;
       end;
     end;
     for var I := State.Devices.Count - 1 downto 0 do
-      if not State.Devices[I].Seen then State.Devices.Delete(I);
-  finally if SetRef <> nil then CFRelease(SetRef); end;
+      if not State.Devices[I].Seen then
+        State.Devices.Delete(I);
+  finally
+    if SetRef <> nil then
+      CFRelease(SetRef);
+  end;
   FDevices := nil;
-  for var Device in State.Devices do FDevices := FDevices + [Device.Info];
+  for var Device in State.Devices do
+    FDevices := FDevices + [Device.Info];
 end;
 
 function TMacOSInputBackend.Poll: TArray<TInputValue>;
@@ -280,7 +331,8 @@ begin
     begin
       var DeviceValues := TList<TInputValue>.Create;
       try
-        Device.Info.Available := True; Device.Info.Error := '';
+        Device.Info.Available := True;
+        Device.Info.Error := '';
         for var Element in Device.Elements do
         begin
           var NativeValue: Pointer := nil;
@@ -294,23 +346,36 @@ begin
           var RawValue := HIDValueInteger(NativeValue);
           var Value: Single := 0;
           case Element.Info.Kind of
-            TInputElementKind.Axis: Value := NormalizeAxis(RawValue, Element.Minimum, Element.Maximum);
+            TInputElementKind.Axis:
+              Value := NormalizeAxis(RawValue, Element.Minimum, Element.Maximum);
             TInputElementKind.Hat:
-              if (RawValue < Element.Minimum) or (RawValue > Element.Maximum) then Value := -1
-              else if Element.Maximum - Element.Minimum = 3 then Value := (RawValue - Element.Minimum) * 2
-              else if Element.Maximum - Element.Minimum = 7 then Value := RawValue - Element.Minimum
-              else Value := -1;
-            else if RawValue <> 0 then Value := 1;
+              if (RawValue < Element.Minimum) or (RawValue > Element.Maximum) then
+                Value := -1
+              else if Element.Maximum - Element.Minimum = 3 then
+                Value := (RawValue - Element.Minimum) * 2
+              else if Element.Maximum - Element.Minimum = 7 then
+                Value := RawValue - Element.Minimum
+              else
+                Value := -1;
+          else
+            if RawValue <> 0 then
+              Value := 1;
           end;
           DeviceValues.Add(TInputValue.Create(Device.Info.Id, Element.Info.Kind, Element.Info.Code, Value));
         end;
-        if Device.Info.Available then Values.AddRange(DeviceValues);
-      finally DeviceValues.Free; end;
+        if Device.Info.Available then
+          Values.AddRange(DeviceValues);
+      finally
+        DeviceValues.Free;
+      end;
       FDevices := FDevices + [Device.Info];
     end;
     Result := Values.ToArray;
-  finally Values.Free; end;
+  finally
+    Values.Free;
+  end;
 end;
 {$ENDIF}
 
 end.
+

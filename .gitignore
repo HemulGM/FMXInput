@@ -84,3 +84,5 @@ modules/
 # FMXInput standalone builds and example profiles
 /build/
 /input-profile.json
+
+/examples/InputProbe
