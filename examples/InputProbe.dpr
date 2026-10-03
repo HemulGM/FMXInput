@@ -12,12 +12,16 @@ uses
 
 begin
   try
-    var Manager := TInputManager.Create(CreateFMXInputBackend);
+    var Mode := TInputDeviceListMode.Gaming;
+    if ParamStr(1) = '--all' then Mode := TInputDeviceListMode.AllInterfaces;
+    var Manager := TInputManager.Create(CreateFMXInputBackend(Mode));
     try
       for var Device in Manager.Devices do
       begin
         Writeln(Device.Name, ' [', Device.Id, ']');
         Writeln('  Available=', Device.Available, ' controls=', Length(Device.Elements));
+        Writeln('  Kind=', InputDeviceKindName(Device.Kind), ' virtual=', Device.IsVirtual,
+          ' auxiliary=', Device.IsAuxiliary, ' physical=', Device.PhysicalId);
         if Device.Error <> '' then
           Writeln('  ', Device.Error);
       end;

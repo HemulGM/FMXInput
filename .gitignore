@@ -87,3 +87,5 @@ modules/
 
 /examples/InputProbe
 /examples/FMXDemo/FMXInputDemo.res
+/examples/FMXDemo/Linux64/*
+/examples/FMXDemo/OSX64/*

@@ -17,6 +17,11 @@ type
     function Poll: TArray<TInputValue>; override;
     procedure Reset; override;
   end;
+
+{$IFDEF FMXINPUT_TESTS}
+procedure TestWindowsMouseInput;
+{$ENDIF}
+
 {$ENDIF}
 
 implementation
@@ -24,7 +29,7 @@ implementation
 {$IFDEF MSWINDOWS}
 
 uses
-  System.SysUtils, System.Classes, System.Generics.Collections,
+  System.SysUtils, System.Classes, System.Math, System.Generics.Collections,
   System.Win.Registry, Winapi.Windows, Winapi.Messages, Winapi.DirectInput;
 
 type
@@ -57,6 +62,45 @@ type
 
   PRawKeyboardPacket = ^TRawKeyboardPacket;
 
+  TRawMouse = record
+    Flags, Padding: Word;
+    Buttons, RawButtons: Cardinal;
+    X, Y: Integer;
+    Extra: Cardinal;
+  end;
+
+  TRawMousePacket = record
+    Header: TRawHeader;
+    Mouse: TRawMouse;
+  end;
+
+  PRawMousePacket = ^TRawMousePacket;
+
+  TRawInfo = record
+    Size, DeviceType: Cardinal;
+    Data: array[0..5] of Cardinal;
+  end;
+
+  TDevicePropertyKey = record
+    FormatId: TGUID;
+    Pid: Cardinal;
+  end;
+
+  THidCaps = record
+    Usage, UsagePage, InputLength, OutputLength, FeatureLength: Word;
+    Reserved: array[0..16] of Word;
+    LinkNodes, InputButtons, InputValues, InputData, OutputButtons, OutputValues, OutputData, FeatureButtons, FeatureValues, FeatureData: Word;
+  end;
+
+  THidButtonCaps = record
+    UsagePage: Word;
+    ReportId, IsAlias: Byte;
+    BitField, LinkCollection, LinkUsage, LinkUsagePage: Word;
+    IsRange, IsStringRange, IsDesignatorRange, IsAbsolute: Byte;
+    Reserved: array[0..9] of Cardinal;
+    UsageMin, UsageMax, StringMin, StringMax, DesignatorMin, DesignatorMax, DataIndexMin, DataIndexMax: Word;
+  end;
+
   TXInputGamepad = record
     Buttons: Word;
     LeftTrigger, RightTrigger: Byte;
@@ -83,13 +127,39 @@ function RawData(Input: THandle; Command: Cardinal; Data: Pointer; var Size: Car
 
 function RawRegister(Devices: Pointer; Count, Size: Cardinal): BOOL; stdcall; external 'user32.dll' name 'RegisterRawInputDevices';
 
+function LocateNode(out Node: Cardinal; Id: PWideChar; Flags: Cardinal): Cardinal; stdcall; external 'cfgmgr32.dll' name 'CM_Locate_DevNodeW';
+
+function ParentNode(out Parent: Cardinal; Node, Flags: Cardinal): Cardinal; stdcall; external 'cfgmgr32.dll' name 'CM_Get_Parent';
+
+function NodeId(Node: Cardinal; Buffer: PWideChar; Length, Flags: Cardinal): Cardinal; stdcall; external 'cfgmgr32.dll' name 'CM_Get_Device_IDW';
+
+function NodeProperty(Node: Cardinal; const Key: TDevicePropertyKey; out PropType: Cardinal; Buffer: Pointer; var Size: Cardinal; Flags: Cardinal): Cardinal; stdcall; external 'cfgmgr32.dll' name 'CM_Get_DevNode_PropertyW';
+
+function HidCaps(Data: Pointer; out Caps: THidCaps): Integer; stdcall; external 'hid.dll' name 'HidP_GetCaps';
+
+function HidButtons(ReportType: Integer; Caps: Pointer; var Count: Word; Data: Pointer): Integer; stdcall; external 'hid.dll' name 'HidP_GetButtonCaps';
+
+function HidValues(ReportType: Integer; Caps: Pointer; var Count: Word; Data: Pointer): Integer; stdcall; external 'hid.dll' name 'HidP_GetValueCaps';
+
+function HidPreparsed(Handle: THandle; out Data: Pointer): Byte; stdcall; external 'hid.dll' name 'HidD_GetPreparsedData';
+
+function HidFreePreparsed(Data: Pointer): Byte; stdcall; external 'hid.dll' name 'HidD_FreePreparsedData';
+
 type
   TKeyboard = class
     Handle: THandle;
     Info: TInputDevice;
     Down: TDictionary<Integer, Boolean>;
+    HasIndicators: Boolean;
     constructor Create;
     destructor Destroy; override;
+  end;
+
+  TMouse = class
+    Handle: THandle;
+    Info: TInputDevice;
+    Buttons: Cardinal;
+    Delta: array[0..3] of Single;
   end;
 
   TController = class
@@ -105,6 +175,7 @@ type
     Window: HWND;
     Input: IDirectInput8W;
     Keyboards: TObjectList<TKeyboard>;
+    Mice: TObjectList<TMouse>;
     Controllers: TObjectList<TController>;
     XPads: TObjectList<TXInputDevice>;
     XProducts: TDictionary<Cardinal, Boolean>;
@@ -112,6 +183,7 @@ type
     XGetState: TXInputGetState;
     procedure WindowProc(var Msg: TMessage);
     procedure ReadKey(Handle: THandle);
+    procedure ReadMouse(const Packet: TRawMousePacket);
     procedure Enumerate;
     constructor Create;
     destructor Destroy; override;
@@ -231,6 +303,7 @@ begin
   if RawOwner <> 0 then
     raise EInvalidOperation.Create('Use one native Windows backend per process');
   Keyboards := TObjectList<TKeyboard>.Create;
+  Mice := TObjectList<TMouse>.Create;
   Controllers := TObjectList<TController>.Create;
   XPads := TObjectList<TXInputDevice>.Create;
   XProducts := TDictionary<Cardinal, Boolean>.Create;
@@ -240,13 +313,16 @@ begin
   if XModule <> 0 then
     XGetState := TXInputGetState(GetProcAddress(XModule, 'XInputGetState'));
   Window := AllocateHWnd(WindowProc);
-  var Registration: TRawRegistration;
-  Registration.UsagePage := 1;
-  Registration.Usage := 6;
+  var Registration: array[0..1] of TRawRegistration;
+  Registration[0] := Default(TRawRegistration);
+  Registration[0].UsagePage := 1;
+  Registration[0].Usage := 6;
   // Nonexclusive registration: ordinary FMX/VCL keyboard input remains enabled.
-  Registration.Flags := $100 or $2000; // INPUTSINK | DEVNOTIFY
-  Registration.Target := Window;
-  if not RawRegister(@Registration, 1, SizeOf(Registration)) then
+  Registration[0].Flags := $2000; // DEVNOTIFY; foreground application input only.
+  Registration[0].Target := Window;
+  Registration[1] := Registration[0];
+  Registration[1].Usage := 2; // Mouse
+  if not RawRegister(@Registration[0], 2, SizeOf(TRawRegistration)) then
     RaiseLastOSError;
   RawOwner := Window;
   var Status := DirectInput8Create(HInstance, $0800, IID_IDirectInput8W, Input, nil);
@@ -263,10 +339,13 @@ begin
     Registration.Usage := 6;
     Registration.Flags := 1; // RIDEV_REMOVE, null target required
     RawRegister(@Registration, 1, SizeOf(Registration));
+    Registration.Usage := 2;
+    RawRegister(@Registration, 1, SizeOf(Registration));
     RawOwner := 0;
   end;
   Controllers.Free;
   Keyboards.Free;
+  Mice.Free;
   XPads.Free;
   XProducts.Free;
   Input := nil;
@@ -286,6 +365,11 @@ begin
     // Never let Pascal exceptions cross the Windows callback boundary.
     for var Keyboard in Keyboards do
       Keyboard.Down.Clear;
+    for var Mouse in Mice do
+    begin
+      Mouse.Buttons := 0;
+      FillChar(Mouse.Delta, SizeOf(Mouse.Delta), 0);
+    end;
   end;
   Msg.Result := DefWindowProc(Window, Msg.Msg, Msg.WParam, Msg.LParam);
 end;
@@ -295,14 +379,22 @@ begin
   var Size: Cardinal := 0;
   if RawData(Handle, $10000003, nil, Size, SizeOf(TRawHeader)) = High(Cardinal) then
     Exit;
-  if Size < SizeOf(TRawKeyboardPacket) then
+  if Size < SizeOf(TRawHeader) then
     Exit;
   var Data: TBytes;
   SetLength(Data, Size);
   if RawData(Handle, $10000003, @Data[0], Size, SizeOf(TRawHeader)) = High(Cardinal) then
     Exit;
   var Packet := PRawKeyboardPacket(@Data[0]);
+  if Packet.Header.InputType = 0 then
+  begin
+    if Size >= SizeOf(TRawMousePacket) then
+      ReadMouse(PRawMousePacket(@Data[0])^);
+    Exit;
+  end;
   if Packet.Header.InputType <> 1 then
+    Exit;
+  if Size < SizeOf(TRawKeyboardPacket) then
     Exit;
   var Code := ScanCodeToHid(Packet.Key.MakeCode, (Packet.Key.Flags and 2) <> 0);
   if (Packet.Key.Flags and 4) <> 0 then
@@ -316,6 +408,34 @@ begin
         Keyboard.Down.Remove(Code)
       else
         Keyboard.Down.AddOrSetValue(Code, True);
+      Exit;
+    end;
+end;
+
+procedure TWindowsState.ReadMouse(const Packet: TRawMousePacket);
+begin
+  for var Mouse in Mice do
+    if Mouse.Handle = Packet.Header.Device then
+    begin
+      var Flags := Word(Packet.Mouse.Buttons and $FFFF);
+      for var I := 0 to 4 do
+      begin
+        if Flags and (1 shl (I * 2)) <> 0 then
+          Mouse.Buttons := Mouse.Buttons or (1 shl I);
+        if Flags and (2 shl (I * 2)) <> 0 then
+          Mouse.Buttons := Mouse.Buttons and not Cardinal(1 shl I);
+      end;
+      // Absolute pointer reports (tablets/RDP) are not relative mouse motion.
+      if Packet.Mouse.Flags and 1 = 0 then
+      begin
+        Mouse.Delta[MouseX] := Mouse.Delta[MouseX] + Packet.Mouse.X;
+        Mouse.Delta[MouseY] := Mouse.Delta[MouseY] + Packet.Mouse.Y;
+      end;
+      var Wheel := SmallInt(Word(Packet.Mouse.Buttons shr 16)) / 120.0;
+      if Flags and $400 <> 0 then
+        Mouse.Delta[MouseWheel] := Mouse.Delta[MouseWheel] + Wheel;
+      if Flags and $800 <> 0 then
+        Mouse.Delta[MouseHorizontalWheel] := Mouse.Delta[MouseHorizontalWheel] + Wheel;
       Exit;
     end;
 end;
@@ -367,6 +487,142 @@ begin
     end;
   finally
     Reg.Free;
+  end;
+end;
+
+function ReadKeyboardElements(const Path: string; out Elements: TArray<TInputElement>; var HasIndicators: Boolean): Boolean;
+begin
+  Result := False;
+  Elements := nil;
+  var HidHandle := CreateFile(PWideChar(Path), 0, FILE_SHARE_READ or FILE_SHARE_WRITE,
+    nil, OPEN_EXISTING, 0, 0);
+  if HidHandle = INVALID_HANDLE_VALUE then
+    Exit;
+  var Data: Pointer := nil;
+  try
+    if HidPreparsed(HidHandle, Data) = 0 then
+      Exit;
+    var Caps: THidCaps;
+  // Descriptor queries use a zero-access HID handle; no exclusive capture.
+    if HidCaps(Data, Caps) < 0 then
+      Exit;
+    HasIndicators := False;
+    var Keys: array[0..255] of Boolean;
+    FillChar(Keys, SizeOf(Keys), 0);
+    for var ReportType := 0 to 1 do
+      for var CapType := 0 to 1 do
+      begin
+        var Count: Word;
+        if CapType = 0 then
+        begin
+          Count := Caps.InputButtons;
+          if ReportType = 1 then
+            Count := Caps.OutputButtons;
+        end
+        else
+        begin
+          Count := Caps.InputValues;
+          if ReportType = 1 then
+            Count := Caps.OutputValues;
+        end;
+        if Count = 0 then
+          Continue;
+        var Buttons: TArray<THidButtonCaps>;
+        SetLength(Buttons, Count);
+    // Button/value caps both have size 72 and identical usage-page/range offsets.
+        if CapType = 0 then
+        begin
+          if HidButtons(ReportType, @Buttons[0], Count, Data) < 0 then
+            Continue;
+        end
+        else if HidValues(ReportType, @Buttons[0], Count, Data) < 0 then
+          Continue;
+        for var I := 0 to Count - 1 do
+        begin
+          var B := Buttons[I];
+          if (ReportType = 1) and (B.UsagePage = 8) then
+            HasIndicators := True;
+          if (ReportType <> 0) or (B.UsagePage <> 7) then
+            Continue;
+          var Last := B.UsageMin;
+          if B.IsRange <> 0 then
+            Last := B.UsageMax;
+          for var Code := B.UsageMin to Min(231, Last) do
+            if Code >= 4 then
+              Keys[Code] := True;
+        end;
+      end;
+    for var Code := 4 to 231 do
+      if Keys[Code] then
+      begin
+        var E: TInputElement;
+        E.Kind := TInputElementKind.Key;
+        E.Code := Code;
+        E.Name := InputKeyName(Code);
+        Elements := Elements + [E];
+      end;
+    Result := True;
+  finally
+    if Data <> nil then
+      HidFreePreparsed(Data);
+    CloseHandle(HidHandle);
+  end;
+end;
+
+procedure ReadPhysicalInfo(const Path: string; var Info: TInputDevice);
+const
+  ContainerKey: TDevicePropertyKey = (FormatId: '{8C7ED206-3F8A-4827-B3AB-AE9E1FAEFC6C}'; Pid: 2);
+  ProductKey: TDevicePropertyKey = (FormatId: '{540B947E-8B40-45BC-A8A2-6A0B894CBDA2}'; Pid: 4);
+  ServiceKey: TDevicePropertyKey = (FormatId: '{A45C254E-DF1C-4EFD-8020-67D146A850E0}'; Pid: 6);
+begin
+  var Parts := Path.Split(['#']);
+  if Length(Parts) < 3 then
+    Exit;
+  var Bus := Parts[0];
+  if Bus.StartsWith('\\?\') then
+    Delete(Bus, 1, 4);
+  var InstanceId := Bus + '\' + Parts[1] + '\' + Parts[2];
+  var Node: Cardinal;
+  if LocateNode(Node, PWideChar(InstanceId), 0) <> 0 then
+    Exit;
+  var Container := Default(TGUID);
+  var Size: Cardinal := SizeOf(Container);
+  var PropType: Cardinal;
+  if NodeProperty(Node, ContainerKey, PropType, @Container, Size, 0) = 0 then
+    if (GUIDToString(Container) <> '{00000000-0000-0000-0000-000000000000}') and
+      (GUIDToString(Container) <> '{00000000-0000-0000-FFFF-FFFFFFFFFFFF}') then
+      Info.PhysicalId := 'windows:container:' + GUIDToString(Container);
+  for var Depth := 0 to 31 do
+  begin
+    var Buffer: array[0..1023] of WideChar;
+    if NodeId(Node, @Buffer[0], Length(Buffer), 0) <> 0 then
+      Break;
+    var Id := UpperCase(string(PWideChar(@Buffer[0])));
+    Size := SizeOf(Buffer);
+    if NodeProperty(Node, ServiceKey, PropType, @Buffer[0], Size, 0) = 0 then
+      if SameText(PWideChar(@Buffer[0]), 'HidEventFilter') then
+        Info.IsAuxiliary := True;
+    if Id.StartsWith('ROOT\') or Id.StartsWith('SWD\') then
+    begin
+      Info.IsVirtual := True;
+      Break;
+    end;
+    if Id.StartsWith('USB\') or Id.StartsWith('BTH') or Id.StartsWith('ACPI\') then
+    begin
+      // Prefer the product name on the physical bus node over "HID Keyboard Device".
+      Size := SizeOf(Buffer);
+      if NodeProperty(Node, ProductKey, PropType, @Buffer[0], Size, 0) = 0 then
+        if Buffer[0] <> #0 then
+          Info.Name := PWideChar(@Buffer[0]);
+      if Info.PhysicalId = '' then
+        Info.PhysicalId := 'windows:device:' + Id;
+      if not Id.Contains('&MI_') then
+        Break;
+    end;
+    var Parent: Cardinal;
+    if ParentNode(Parent, Node, 0) <> 0 then
+      Break;
+    Node := Parent;
   end;
 end;
 
@@ -428,17 +684,107 @@ begin
     Keyboard.Info.ProductId := PathHexId(Path, 'PID_');
     Keyboard.Info.Kind := TInputDeviceKind.Keyboard;
     Keyboard.Info.Available := True;
-    // Raw Input does not enumerate individual keyboard HID elements.
-    for var Code := 4 to 231 do
+    var Info := Default(TRawInfo);
+    Info.Size := SizeOf(Info);
+    var InfoSize: Cardinal := SizeOf(Info);
+    if RawDeviceInfo(D.Handle, $2000000B, @Info, InfoSize) <> High(Cardinal) then
     begin
-      var Element: TInputElement;
-      Element.Kind := TInputElementKind.Key;
-      Element.Code := Code;
-      Element.Name := InputKeyName(Code);
-      Keyboard.Info.Elements := Keyboard.Info.Elements + [Element];
+      Keyboard.HasIndicators := Info.Data[4] > 0;
+      Keyboard.Info.IsAuxiliary := Info.Data[5] < 50;
     end;
+    // Parse actual HID usages; media/system collections are not typing keyboards.
+    if ReadKeyboardElements(Path, Keyboard.Info.Elements, Keyboard.HasIndicators) then
+      Keyboard.Info.IsAuxiliary := False
+    else
+    begin
+      // Without a HID descriptor, a typing keyboard must at least expose LEDs.
+      // ACPI hotkey/convertible controls otherwise look like generic keyboards.
+      Keyboard.Info.IsAuxiliary := Keyboard.Info.IsAuxiliary or not Keyboard.HasIndicators;
+      for var Code := 4 to 231 do
+      begin
+        var Element: TInputElement;
+        Element.Kind := TInputElementKind.Key;
+        Element.Code := Code;
+        Element.Name := InputKeyName(Code);
+        Keyboard.Info.Elements := Keyboard.Info.Elements + [Element];
+      end;
+    end;
+    ReadPhysicalInfo(Path, Keyboard.Info);
     Keyboards.Add(Keyboard);
   end;
+  for var I := Mice.Count - 1 downto 0 do
+  begin
+    var Found := False;
+    for var D in Devices do
+      if (D.DeviceType = 0) and (D.Handle = Mice[I].Handle) then
+        Found := True;
+    if not Found then
+      Mice.Delete(I);
+  end;
+  for var D in Devices do
+  begin
+    if D.DeviceType <> 0 then
+      Continue;
+    var Found := False;
+    for var Existing in Mice do
+      if Existing.Handle = D.Handle then
+        Found := True;
+    if Found then
+      Continue;
+    var Path := DevicePathName(D.Handle);
+    if Path = '' then
+      Continue;
+    var Mouse := TMouse.Create;
+    Mouse.Handle := D.Handle;
+    Mouse.Info.Id := 'windows:raw:' + Path;
+    Mouse.Info.Name := KeyboardName(Path);
+    Mouse.Info.Kind := TInputDeviceKind.Mouse;
+    Mouse.Info.VendorId := PathHexId(Path, 'VID_');
+    Mouse.Info.ProductId := PathHexId(Path, 'PID_');
+    Mouse.Info.Available := True;
+    ReadPhysicalInfo(Path, Mouse.Info);
+    var Info := Default(TRawInfo);
+    Info.Size := SizeOf(Info);
+    var InfoSize: Cardinal := SizeOf(Info);
+    var ButtonCount := 5;
+    if RawDeviceInfo(D.Handle, $2000000B, @Info, InfoSize) <> High(Cardinal) then
+      ButtonCount := Min(5, Integer(Info.Data[1]));
+    for var Code := 0 to ButtonCount - 1 do
+    begin
+      var Element: TInputElement;
+      Element.Kind := TInputElementKind.Button;
+      Element.Code := Code;
+      Element.Name := MouseElementName(Element.Kind, Code);
+      Mouse.Info.Elements := Mouse.Info.Elements + [Element];
+    end;
+    for var Code := 0 to 3 do
+    begin
+      var Element: TInputElement;
+      Element.Kind := TInputElementKind.RelativeAxis;
+      Element.Code := Code;
+      Element.Name := MouseElementName(Element.Kind, Code);
+      Mouse.Info.Elements := Mouse.Info.Elements + [Element];
+    end;
+    Mice.Add(Mouse);
+  end;
+  for var Keyboard in Keyboards do
+    if not Keyboard.HasIndicators and (Keyboard.Info.PhysicalId <> '') then
+      for var Mouse in Mice do
+        if Mouse.Info.PhysicalId = Keyboard.Info.PhysicalId then
+          Keyboard.Info.IsAuxiliary := True;
+  for var Mouse in Mice do
+    if Mouse.Info.PhysicalId <> '' then
+      for var Keyboard in Keyboards do
+        if Keyboard.HasIndicators and IsGamingInputDevice(Keyboard.Info) and
+          (Keyboard.Info.PhysicalId = Mouse.Info.PhysicalId) then
+          Mouse.Info.IsAuxiliary := True;
+  // Keep additional typing/NKRO interfaces of a proven physical keyboard.
+  for var Keyboard in Keyboards do
+    if Keyboard.Info.PhysicalId <> '' then
+      for var Primary in Keyboards do
+        if Primary.HasIndicators and IsGamingInputDevice(Primary.Info) and
+          (Primary.Info.PhysicalId = Keyboard.Info.PhysicalId) then
+          Keyboard.Info.IsAuxiliary := False;
   for var Controller in Controllers do
     Controller.Seen := False;
   if Failed(Input.EnumDevices(DI8DEVCLASS_GAMECTRL, EnumControllers, Self, DIEDFL_ATTACHEDONLY)) then
@@ -513,6 +859,8 @@ begin
   FDevices := nil;
   for var Keyboard in State.Keyboards do
     FDevices := FDevices + [Keyboard.Info];
+  for var Mouse in State.Mice do
+    FDevices := FDevices + [Mouse.Info];
   for var Controller in State.Controllers do
     FDevices := FDevices + [Controller.Info];
   for var Pad in State.XPads do
@@ -527,6 +875,11 @@ begin
     DispatchMessage(Message);
   for var Keyboard in State.Keyboards do
     Keyboard.Down.Clear;
+  for var Mouse in State.Mice do
+  begin
+    Mouse.Buttons := 0;
+    FillChar(Mouse.Delta, SizeOf(Mouse.Delta), 0);
+  end;
 end;
 
 function TWindowsInputBackend.Poll: TArray<TInputValue>;
@@ -541,6 +894,22 @@ begin
     for var Keyboard in State.Keyboards do
       for var Code in Keyboard.Down.Keys do
         Values.Add(TInputValue.Create(Keyboard.Info.Id, TInputElementKind.Key, Code, 1));
+    for var Mouse in State.Mice do
+      for var Element in Mouse.Info.Elements do
+      begin
+        var Value: Single := 0;
+        if Element.Kind = TInputElementKind.Button then
+        begin
+          if Mouse.Buttons and (1 shl Element.Code) <> 0 then
+            Value := 1;
+        end
+        else
+        begin
+          Value := Mouse.Delta[Element.Code];
+          Mouse.Delta[Element.Code] := 0;
+        end;
+        Values.Add(TInputValue.Create(Mouse.Info.Id, Element.Kind, Element.Code, Value));
+      end;
     for var Controller in State.Controllers do
     begin
       if Controller.Device = nil then
@@ -623,15 +992,22 @@ begin
     FDevices := nil;
     for var Keyboard in State.Keyboards do
       FDevices := FDevices + [Keyboard.Info];
+    for var Mouse in State.Mice do
+      FDevices := FDevices + [Mouse.Info];
     for var Controller in State.Controllers do
       FDevices := FDevices + [Controller.Info];
     for var Pad in State.XPads do
       FDevices := FDevices + [Pad.Info];
-    Result := Values.ToArray;
+    Result := PublishValues(Values.ToArray);
   finally
     Values.Free;
   end;
 end;
+
+{$IFDEF FMXINPUT_TESTS}
+{$I tests/WindowsMouseChecks.inc}
+{$ENDIF}
+
 {$ENDIF}
 
 end.

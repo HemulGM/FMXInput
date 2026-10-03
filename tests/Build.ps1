@@ -36,7 +36,9 @@ foreach ($taskTarget in $Targets) {
         $taskProgramPath = Join-Path $taskRoot $taskProgram
         Push-Location (Split-Path -Parent $taskProgramPath)
         try {
-            $taskLog = & $taskCompiler @taskFlags "-E$taskOutput" $taskProgramPath
+            $taskProgramFlags = $taskFlags
+            if ($taskName -eq 'InputTests') { $taskProgramFlags += '-DFMXINPUT_TESTS' }
+            $taskLog = & $taskCompiler @taskProgramFlags "-E$taskOutput" $taskProgramPath
         } finally { Pop-Location }
         $taskStatus = $LASTEXITCODE
         $taskLog | Set-Content -LiteralPath (Join-Path $taskOutput "$taskName.log")

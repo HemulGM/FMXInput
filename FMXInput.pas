@@ -1,4 +1,4 @@
-﻿unit FMXInput;
+unit FMXInput;
 
 interface
 
@@ -8,9 +8,11 @@ uses
 {$SCOPEDENUMS ON}
 
 type
-  TInputDeviceKind = (Keyboard, Controller);
+  TInputDeviceKind = (Keyboard, Controller, Mouse);
 
-  TInputElementKind = (Key, Button, Axis, Hat);
+  TInputElementKind = (Key, Button, Axis, Hat, RelativeAxis);
+
+  TInputDeviceListMode = (Gaming, AllInterfaces);
 
   TInputElement = record
     Kind: TInputElementKind;
@@ -18,10 +20,13 @@ type
     Name: string;
     // Axis values are normalized to [-1, 1]. Hat values are -1 (neutral)
     // or clockwise directions 0..7, starting at up. Keys use USB HID usages.
+    // RelativeAxis values are raw motion counts / fractional wheel detents.
   end;
 
   TInputDevice = record
     Id, Name, Serial, Error: string;
+    PhysicalId: string; // Same physical parent/container, never vendor/product alone.
+    IsVirtual, IsAuxiliary: Boolean;
     Kind: TInputDeviceKind;
     VendorId, ProductId: Word;
     Available: Boolean;
@@ -38,14 +43,18 @@ type
 
   // Backends return complete current snapshots, not only changed values.
   // Missing values mean released/neutral. Calls must use the creation thread.
+  // RelativeAxis is an accumulated delta consumed by each backend Poll.
   TInputBackend = class abstract
   protected
     FDevices: TArray<TInputDevice>;
+    function PublishValues(const Values: TArray<TInputValue>): TArray<TInputValue>;
   public
+    DeviceListMode: TInputDeviceListMode; // Only affects controller interfaces; desktop input is always combined.
     procedure Refresh; virtual; abstract;
     function Poll: TArray<TInputValue>; virtual; abstract;
     procedure Reset; virtual;
     function Devices: TArray<TInputDevice>;
+    function RawDevices: TArray<TInputDevice>;
   end;
 
   TInputBinding = record
@@ -53,7 +62,7 @@ type
     DeviceId: string;
     Kind: TInputElementKind;
     Code: Integer;
-    Direction: Integer; // Axis: -1/+1. Hat: 0..7. Key/button: ignored.
+    Direction: Integer; // Axis/RelativeAxis: -1/+1. Hat: 0..7. Key/button: ignored.
     AxisOrigin: Single; // Rest position: 0 for sticks, often -1/+1 for triggers.
     PressThreshold, ReleaseThreshold: Single;
     class function Create(Action: Integer; const Value: TInputValue): TInputBinding; static;
@@ -62,7 +71,7 @@ type
   TInputManager = class
   private
     FBackend: TInputBackend;
-    FOwnsBackend, FEnabled, FCapturing: Boolean;
+    FOwnsBackend, FEnabled, FCapturing, FCapturePointerMotion: Boolean;
     FThreadId: TThreadID;
     FLastRefresh: UInt64;
     FValues: TDictionary<string, Single>;
@@ -90,7 +99,7 @@ type
     function Devices: TArray<TInputDevice>;
     function Values: TArray<TInputValue>;
     function IsPressed(Action: Integer): Boolean;
-    procedure BeginCapture(Action: Integer; const DeviceId: string = '');
+    procedure BeginCapture(Action: Integer; const DeviceId: string = ''; IncludePointerMotion: Boolean = False);
     procedure CancelCapture;
     function TakeCaptured(out Binding: TInputBinding): Boolean;
     procedure SaveBindings(Stream: TStream);
@@ -99,8 +108,29 @@ type
     property Capturing: Boolean read FCapturing;
   end;
 
-// Native factory is desktop-only. No window/framework/RetroMul dependencies.
-function CreateFMXInputBackend: TInputBackend;
+// Native factory is desktop-only. No FMX/VCL/RetroMul dependencies.
+function CreateFMXInputBackend(ListMode: TInputDeviceListMode = TInputDeviceListMode.Gaming): TInputBackend;
+
+const
+  SystemKeyboardId = 'system:keyboard';
+  SystemMouseId = 'system:mouse';
+  MouseLeft = 0;
+  MouseRight = 1;
+  MouseMiddle = 2;
+  MouseBack = 3;
+  MouseForward = 4;
+  MouseX = 0;
+  MouseY = 1;
+  MouseWheel = 2;
+  MouseHorizontalWheel = 3;
+
+function InputDeviceKindName(Kind: TInputDeviceKind): string;
+
+function MouseElementName(Kind: TInputElementKind; Code: Integer): string;
+
+function IsGamingInputDevice(const Device: TInputDevice): Boolean;
+
+function InputDeviceId(const Device: TInputDevice; Mode: TInputDeviceListMode): string;
 
 function InputValueKey(const DeviceId: string; Kind: TInputElementKind; Code: Integer): string;
 
@@ -109,6 +139,10 @@ function NormalizeAxis(Value, Minimum, Maximum: Int64): Single;
 function ScanCodeToHid(ScanCode: Word; Extended: Boolean): Word;
 
 function LinuxKeyToHid(Code: Word): Word;
+
+function MacKeyToHid(Code: Word): Word;
+
+function DesktopInputDevice(Kind: TInputDeviceKind): TInputDevice;
 
 function InputKeyName(Code: Integer): string;
 
@@ -127,7 +161,7 @@ uses
   {$ENDIF}
   System.JSON;
 
-function CreateFMXInputBackend: TInputBackend;
+function CreateFMXInputBackend(ListMode: TInputDeviceListMode): TInputBackend;
 begin
   {$IF Defined(MSWINDOWS)}
   Result := TWindowsInputBackend.Create;
@@ -138,6 +172,90 @@ begin
   {$ELSE}
   raise ENotSupportedException.Create('FMXInput supports Windows, Linux and macOS desktops');
   {$ENDIF}
+  Result.DeviceListMode := ListMode;
+end;
+
+function InputDeviceKindName(Kind: TInputDeviceKind): string;
+begin
+  case Kind of
+    TInputDeviceKind.Keyboard:
+      Result := 'Keyboard';
+    TInputDeviceKind.Controller:
+      Result := 'Controller';
+    TInputDeviceKind.Mouse:
+      Result := 'Mouse';
+  end;
+end;
+
+function MouseElementName(Kind: TInputElementKind; Code: Integer): string;
+const
+  Buttons: array[0..4] of string = ('Left button', 'Right button', 'Middle button', 'Back button', 'Forward button');
+  Axes: array[0..3] of string = ('Mouse X', 'Mouse Y', 'Wheel', 'Horizontal wheel');
+begin
+  if (Kind = TInputElementKind.Button) and (Code >= 0) and (Code <= High(Buttons)) then
+    Exit(Buttons[Code]);
+  if (Kind = TInputElementKind.RelativeAxis) and (Code >= 0) and (Code <= High(Axes)) then
+    Exit(Axes[Code]);
+  Result := 'Mouse button ' + IntToStr(Code + 1);
+end;
+
+function IsGamingInputDevice(const Device: TInputDevice): Boolean;
+begin
+  Result := not Device.IsAuxiliary and (Length(Device.Elements) > 0);
+  if not Result then
+    Exit;
+  if Device.Kind = TInputDeviceKind.Mouse then
+  begin
+    var X, Y, Button: Boolean;
+    X := False;
+    Y := False;
+    Button := False;
+    for var E in Device.Elements do
+    begin
+      if E.Kind = TInputElementKind.RelativeAxis then
+        case E.Code of
+          MouseX:
+            X := True;
+          MouseY:
+            Y := True;
+        end;
+      if (E.Kind = TInputElementKind.Button) and (E.Code = MouseLeft) then
+        Button := True;
+    end;
+    Result := X and Y and Button;
+  end;
+  if Device.Kind = TInputDeviceKind.Keyboard then
+  begin
+    var A, Q, Enter, Space: Boolean;
+    A := False;
+    Q := False;
+    Enter := False;
+    Space := False;
+    for var E in Device.Elements do
+      if E.Kind = TInputElementKind.Key then
+        case E.Code of
+          4:
+            A := True;
+          20:
+            Q := True;
+          40:
+            Enter := True;
+          44:
+            Space := True;
+        end;
+    Result := A and Q and Enter and Space;
+  end;
+end;
+
+function InputDeviceId(const Device: TInputDevice; Mode: TInputDeviceListMode): string;
+begin
+  if Device.Kind = TInputDeviceKind.Keyboard then
+    Exit(SystemKeyboardId);
+  if Device.Kind = TInputDeviceKind.Mouse then
+    Exit(SystemMouseId);
+  Result := Device.Id;
+  if (Mode = TInputDeviceListMode.Gaming) and (Device.PhysicalId <> '') then
+    Result := Device.PhysicalId + ':' + InputDeviceKindName(Device.Kind).ToLower;
 end;
 
 function InputValueKey(const DeviceId: string; Kind: TInputElementKind; Code: Integer): string;
@@ -382,15 +500,182 @@ begin
   end;
 end;
 
+function MacKeyToHid(Code: Word): Word;
+const
+  // AppKit virtual key codes are physical positions, independent of text layout.
+  Codes: array[0..127] of Byte = (
+    4, 22, 7, 9, 11, 10, 29, 27, 6, 25, 100, 5, 20, 26, 8, 21,
+    28, 23, 30, 31, 32, 33, 35, 34, 46, 38, 36, 45, 37, 39, 48, 18,
+    24, 47, 12, 19, 40, 15, 13, 52, 14, 51, 49, 54, 56, 17, 16, 55,
+    43, 44, 53, 42, 0, 41, 231, 227, 225, 57, 226, 224, 229, 230, 228, 0,
+    108, 99, 0, 85, 0, 87, 0, 83, 0, 0, 0, 84, 88, 0, 86, 109,
+    110, 103, 98, 89, 90, 91, 92, 93, 94, 95, 111, 96, 97, 0, 0, 0,
+    62, 63, 64, 60, 65, 66, 0, 68, 0, 104, 107, 105, 0, 67, 0, 69,
+    0, 106, 73, 74, 75, 76, 61, 77, 59, 78, 58, 80, 79, 81, 82, 0);
+begin
+  if Code <= High(Codes) then
+    Result := Codes[Code]
+  else
+    Result := 0;
+end;
+
+function DesktopInputDevice(Kind: TInputDeviceKind): TInputDevice;
+begin
+  if Kind = TInputDeviceKind.Controller then
+    raise EArgumentException.Create('A controller is not an aggregate desktop source');
+  Result := Default(TInputDevice);
+  Result.Kind := Kind;
+  Result.Id := InputDeviceId(Result, TInputDeviceListMode.Gaming);
+  Result.Name := InputDeviceKindName(Kind);
+  Result.Available := True;
+  if Kind = TInputDeviceKind.Keyboard then
+    for var Code := 4 to 231 do
+    begin
+      var E: TInputElement;
+      E.Kind := TInputElementKind.Key;
+      E.Code := Code;
+      E.Name := InputKeyName(Code);
+      Result.Elements := Result.Elements + [E];
+    end
+  else
+  begin
+    for var Code := 0 to 31 do
+    begin
+      var E: TInputElement;
+      E.Kind := TInputElementKind.Button;
+      E.Code := Code;
+      E.Name := MouseElementName(E.Kind, Code);
+      Result.Elements := Result.Elements + [E];
+    end;
+    for var Code := 0 to 3 do
+    begin
+      var E: TInputElement;
+      E.Kind := TInputElementKind.RelativeAxis;
+      E.Code := Code;
+      E.Name := MouseElementName(E.Kind, Code);
+      Result.Elements := Result.Elements + [E];
+    end;
+  end;
+end;
+
 procedure TInputBackend.Reset;
 begin
 end;
 
-function TInputBackend.Devices: TArray<TInputDevice>;
+function TInputBackend.RawDevices: TArray<TInputDevice>;
 begin
   Result := Copy(FDevices);
   for var i := 0 to High(Result) do
     Result[i].Elements := Copy(Result[i].Elements);
+end;
+
+function TInputBackend.Devices: TArray<TInputDevice>;
+const
+  Order: array[0..2] of TInputDeviceKind = (TInputDeviceKind.Keyboard, TInputDeviceKind.Mouse, TInputDeviceKind.Controller);
+begin
+  Result := nil;
+  for var Kind in Order do
+  begin
+    var Present := Kind = TInputDeviceKind.Controller;
+    if not Present then
+      for var Source in FDevices do
+        if (Source.Kind = Kind) and IsGamingInputDevice(Source) then
+          Present := True;
+    if not Present then
+      Continue;
+    for var Item in FDevices do
+    begin
+      var Device := Item;
+      if Device.Kind <> Kind then
+        Continue;
+      if (Kind = TInputDeviceKind.Controller) and
+        (DeviceListMode = TInputDeviceListMode.Gaming) and not IsGamingInputDevice(Device) then
+        Continue;
+      Device.Id := InputDeviceId(Device, DeviceListMode);
+      if Kind <> TInputDeviceKind.Controller then
+      begin
+        Device.Name := InputDeviceKindName(Kind);
+        Device.PhysicalId := '';
+        Device.Serial := '';
+        Device.VendorId := 0;
+        Device.ProductId := 0;
+        Device.IsVirtual := False;
+        Device.IsAuxiliary := False;
+      end;
+      var Index := -1;
+      for var I := 0 to High(Result) do
+        if Result[I].Id = Device.Id then
+        begin
+          Index := I;
+          Break;
+        end;
+      if Index < 0 then
+      begin
+        Device.Elements := Copy(Device.Elements);
+        Result := Result + [Device];
+        if Device.Available then
+          Result[High(Result)].Error := '';
+      end
+      else
+      begin
+        Result[Index].Available := Result[Index].Available or Device.Available;
+        if Result[Index].Available then
+          Result[Index].Error := '';
+        for var E in Device.Elements do
+        begin
+          var Found := False;
+          for var Existing in Result[Index].Elements do
+            if (Existing.Kind = E.Kind) and (Existing.Code = E.Code) then
+              Found := True;
+          if not Found then
+            Result[Index].Elements := Result[Index].Elements + [E];
+        end;
+      end;
+    end;
+  end;
+end;
+
+function TInputBackend.PublishValues(const Values: TArray<TInputValue>): TArray<TInputValue>;
+begin
+  var Indices := TDictionary<string, Integer>.Create;
+  var Ids := TDictionary<string, string>.Create;
+  var Output := TList<TInputValue>.Create;
+  try
+    var published := Devices;
+    for var Device in FDevices do
+      for var Visible in published do
+        if Visible.Id = InputDeviceId(Device, DeviceListMode) then
+          Ids.AddOrSetValue(Device.Id, Visible.Id);
+    for var Item in Values do
+    begin
+      var Value := Item;
+      var Id: string;
+      if not Ids.TryGetValue(Value.DeviceId, Id) then
+        Continue;
+      Value.DeviceId := Id;
+      var Key := InputValueKey(Id, Value.Kind, Value.Code);
+      var Index: Integer;
+      if not Indices.TryGetValue(Key, Index) then
+      begin
+        Indices.Add(Key, Output.Count);
+        Output.Add(Value);
+      end
+      else
+      begin
+        var Existing := Output[Index];
+        if Value.Kind = TInputElementKind.RelativeAxis then
+          Existing.Value := Existing.Value + Value.Value
+        else if Value.Kind in [TInputElementKind.Key, TInputElementKind.Button] then
+          Existing.Value := Max(Existing.Value, Value.Value);
+        Output[Index] := Existing;
+      end;
+    end;
+    Result := Output.ToArray;
+  finally
+    Output.Free;
+    Ids.Free;
+    Indices.Free;
+  end;
 end;
 
 class function TInputBinding.Create(Action: Integer; const Value: TInputValue): TInputBinding;
@@ -401,7 +686,7 @@ begin
   Result.Code := Value.Code;
   Result.Direction := 0;
   Result.AxisOrigin := 0;
-  if Value.Kind = TInputElementKind.Axis then
+  if Value.Kind in [TInputElementKind.Axis, TInputElementKind.RelativeAxis] then
     if Value.Value < 0 then
       Result.Direction := -1
     else
@@ -410,6 +695,13 @@ begin
     Result.Direction := Round(Value.Value);
   Result.PressThreshold := 0.65;
   Result.ReleaseThreshold := 0.45;
+  if Value.Kind = TInputElementKind.RelativeAxis then
+  begin
+    Result.PressThreshold := 1;
+    if Value.Code in [MouseWheel, MouseHorizontalWheel] then
+      Result.PressThreshold := 0.001;
+    Result.ReleaseThreshold := 0;
+  end;
 end;
 
 constructor TInputManager.Create(Backend: TInputBackend; OwnsBackend: Boolean);
@@ -476,6 +768,8 @@ begin
   if not FValues.TryGetValue(InputValueKey(Binding.DeviceId, Binding.Kind, Binding.Code), Value) then
     Exit(False);
   case Binding.Kind of
+    TInputElementKind.RelativeAxis:
+      Result := Value * Binding.Direction >= Binding.PressThreshold;
     TInputElementKind.Axis:
       begin
         var Travel := 1.0 - Binding.AxisOrigin * Binding.Direction;
@@ -517,6 +811,11 @@ begin
     if not FCapturing or ((FCaptureDevice <> '') and (FCaptureDevice <> V.DeviceId)) then
       Continue;
     case V.Kind of
+      TInputElementKind.RelativeAxis:
+        if V.Code in [MouseX, MouseY] then
+          Candidate := FCapturePointerMotion and (Abs(V.Value) >= 1)
+        else
+          Candidate := Abs(V.Value) >= 0.001;
       TInputElementKind.Axis:
         begin
           var Origin: Single := 0;
@@ -585,6 +884,7 @@ begin
     (Abs(Binding.AxisOrigin) > 1) or
     ((Binding.Kind = TInputElementKind.Axis) and (Binding.AxisOrigin * Binding.Direction >= 1)) or
     ((Binding.Kind = TInputElementKind.Axis) and (Binding.Direction <> -1) and (Binding.Direction <> 1)) or
+    ((Binding.Kind = TInputElementKind.RelativeAxis) and (Binding.Direction <> -1) and (Binding.Direction <> 1)) or
     ((Binding.Kind = TInputElementKind.Hat) and ((Binding.Direction < 0) or (Binding.Direction > 7))) then
     raise EArgumentException.Create('Invalid input binding');
 end;
@@ -594,7 +894,7 @@ begin
   CheckThread;
   ValidateBinding(Binding);
   FBindings.Add(Binding);
-  FActiveBindings.Add(False);
+  FActiveBindings.Add(BindingPressed(Binding, False));
 end;
 
 function TInputManager.Bindings: TArray<TInputBinding>;
@@ -635,14 +935,14 @@ begin
       Exit(True);
 end;
 
-procedure TInputManager.BeginCapture(Action: Integer; const DeviceId: string);
+procedure TInputManager.BeginCapture(Action: Integer; const DeviceId: string; IncludePointerMotion: Boolean);
 begin
   CheckThread;
   if not FEnabled then
     raise EInvalidOperation.Create('Input is disabled');
   CancelCapture;
   Poll;
-  var Values := FBackend.Poll;
+  var Values := FCurrentValues;
   for var V in Values do
   begin
     var Key := InputValueKey(V.DeviceId, V.Kind, V.Code);
@@ -658,11 +958,12 @@ begin
         FBlocked.AddOrSetValue(Key, True);
     end
     else if ((V.Kind = TInputElementKind.Hat) and (V.Value >= 0)) or
-      ((V.Kind <> TInputElementKind.Hat) and (V.Value > 0.5)) then
+      ((V.Kind in [TInputElementKind.Key, TInputElementKind.Button]) and (V.Value > 0.5)) then
       FBlocked.AddOrSetValue(Key, True);
   end;
   FCaptureAction := Action;
   FCaptureDevice := DeviceId;
+  FCapturePointerMotion := IncludePointerMotion;
   FCapturing := True;
 end;
 

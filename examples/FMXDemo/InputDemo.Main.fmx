@@ -47,7 +47,7 @@ object InputDemoForm: TInputDemoForm
         Size.PlatformDefault = False
         TextSettings.Font.Size = 24.000000000000000000
         TextSettings.Font.StyleExt = {00070000000000000004000000}
-        Text = 'Physical input devices'
+        Text = 'Keyboard, mouse and gaming devices'
       end
       object SubtitleLabel: TLabel
         Align = Client
@@ -55,8 +55,8 @@ object InputDemoForm: TInputDemoForm
         Size.Height = 34.000000000000000000
         Size.PlatformDefault = False
         Text = 
-          'Select a device to inspect its controls and capture a key, butto' +
-          'n or axis.'
+          'Select a keyboard, mouse or controller. Capture a button, key, w' +
+          'heel or controller axis.'
       end
     end
     object DeviceLayout: TLayout
@@ -162,10 +162,19 @@ object InputDemoForm: TInputDemoForm
           Text = 'Cancel'
           OnClick = CancelButtonClick
         end
+        object CaptureMotionCheck: TCheckBox
+          Align = Right
+          Margins.Left = 12.000000000000000000
+          Position.X = 892.000000000000000000
+          Size.Width = 180.000000000000000000
+          Size.Height = 38.000000000000000000
+          Size.PlatformDefault = False
+          Text = 'Capture mouse motion'
+        end
         object CaptureLabel: TLabel
           Align = Client
           Margins.Left = 16.000000000000000000
-          Size.Width = 804.000000000000000000
+          Size.Width = 612.000000000000000000
           Size.Height = 38.000000000000000000
           Size.PlatformDefault = False
           Text = 'Release controls, then choose Capture next input.'
