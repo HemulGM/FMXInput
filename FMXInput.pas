@@ -1,4 +1,4 @@
-unit FMXInput;
+﻿unit FMXInput;
 
 interface
 
@@ -51,6 +51,8 @@ type
   public
     DeviceListMode: TInputDeviceListMode; // Only affects controller interfaces; desktop input is always combined.
     procedure Refresh; virtual; abstract;
+    // Periodic discovery may use cached topology; explicit Refresh stays complete.
+    procedure RefreshIfNeeded; virtual;
     function Poll: TArray<TInputValue>; virtual; abstract;
     procedure Reset; virtual;
     function Devices: TArray<TInputDevice>;
@@ -558,6 +560,11 @@ begin
   end;
 end;
 
+procedure TInputBackend.RefreshIfNeeded;
+begin
+  Refresh;
+end;
+
 procedure TInputBackend.Reset;
 begin
 end;
@@ -797,7 +804,10 @@ procedure TInputManager.Poll;
 begin
   CheckThread;
   if TThread.GetTickCount64 - FLastRefresh >= 1000 then
-    Refresh;
+  begin
+    FBackend.RefreshIfNeeded;
+    FLastRefresh := TThread.GetTickCount64;
+  end;
   var Values := FBackend.Poll;
   FValues.Clear;
   if not FEnabled then

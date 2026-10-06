@@ -10,16 +10,19 @@ type
   TWindowsInputBackend = class(TInputBackend)
   private
     FImpl: TObject;
+    procedure RefreshDevices(ForceControllers: Boolean);
   public
     constructor Create;
     destructor Destroy; override;
     procedure Refresh; override;
+    procedure RefreshIfNeeded; override;
     function Poll: TArray<TInputValue>; override;
     procedure Reset; override;
   end;
 
 {$IFDEF FMXINPUT_TESTS}
 procedure TestWindowsMouseInput;
+procedure TestWindowsDeviceRefresh;
 {$ENDIF}
 
 {$ENDIF}
@@ -181,6 +184,11 @@ type
     XProducts: TDictionary<Cardinal, Boolean>;
     XModule: HMODULE;
     XGetState: TXInputGetState;
+    KnownRawDevices: TArray<TRawDevice>;
+    ControllersDirty: Boolean;
+    {$IFDEF FMXINPUT_TESTS}
+    ControllerEnumerations: Integer;
+    {$ENDIF}
     procedure WindowProc(var Msg: TMessage);
     procedure ReadKey(Handle: THandle);
     procedure ReadMouse(const Packet: TRawMousePacket);
@@ -312,6 +320,7 @@ begin
     XModule := LoadLibraryEx('xinput9_1_0.dll', 0, $800);
   if XModule <> 0 then
     XGetState := TXInputGetState(GetProcAddress(XModule, 'XInputGetState'));
+  ControllersDirty := True;
   Window := AllocateHWnd(WindowProc);
   var Registration: array[0..1] of TRawRegistration;
   Registration[0] := Default(TRawRegistration);
@@ -360,7 +369,10 @@ procedure TWindowsState.WindowProc(var Msg: TMessage);
 begin
   try
     if Msg.Msg = WM_INPUT then
-      ReadKey(THandle(Msg.LParam));
+      ReadKey(THandle(Msg.LParam))
+    else if (Msg.Msg = $00FE { WM_INPUT_DEVICE_CHANGE }) or
+      (Msg.Msg = WM_DEVICECHANGE) then
+      ControllersDirty := True;
   except
     // Never let Pascal exceptions cross the Windows callback boundary.
     for var Keyboard in Keyboards do
@@ -640,6 +652,27 @@ begin
       RaiseLastOSError;
     SetLength(Devices, ReadCount);
   end;
+  // The cheap Raw Input snapshot also catches topology changes if a device
+  // notification was missed. Compare handles, not the enumeration order.
+  if Length(Devices) <> Length(KnownRawDevices) then
+    ControllersDirty := True;
+  if not ControllersDirty then
+    for var D in Devices do
+    begin
+      var Found := False;
+      for var Known in KnownRawDevices do
+        if (D.Handle = Known.Handle) and (D.DeviceType = Known.DeviceType) then
+        begin
+          Found := True;
+          Break;
+        end;
+      if not Found then
+      begin
+        ControllersDirty := True;
+        Break;
+      end;
+    end;
+  KnownRawDevices := Copy(Devices);
   XProducts.Clear;
   if Assigned(XGetState) then
     for var D in Devices do
@@ -785,13 +818,22 @@ begin
         if Primary.HasIndicators and IsGamingInputDevice(Primary.Info) and
           (Primary.Info.PhysicalId = Keyboard.Info.PhysicalId) then
           Keyboard.Info.IsAuxiliary := False;
-  for var Controller in Controllers do
-    Controller.Seen := False;
-  if Failed(Input.EnumDevices(DI8DEVCLASS_GAMECTRL, EnumControllers, Self, DIEDFL_ATTACHEDONLY)) then
-    raise EInvalidOperation.Create('DirectInput enumeration failed');
-  for var I := Controllers.Count - 1 downto 0 do
-    if not Controllers[I].Seen then
-      Controllers.Delete(I);
+  // EnumDevices can block the calling/UI thread for tens of milliseconds even
+  // when nothing changed. Only rescan DirectInput after hotplug or explicit refresh.
+  if ControllersDirty then
+  begin
+    {$IFDEF FMXINPUT_TESTS}
+    Inc(ControllerEnumerations);
+    {$ENDIF}
+    for var Controller in Controllers do
+      Controller.Seen := False;
+    if Failed(Input.EnumDevices(DI8DEVCLASS_GAMECTRL, EnumControllers, Self, DIEDFL_ATTACHEDONLY)) then
+      raise EInvalidOperation.Create('DirectInput enumeration failed');
+    for var I := Controllers.Count - 1 downto 0 do
+      if not Controllers[I].Seen then
+        Controllers.Delete(I);
+    ControllersDirty := False;
+  end;
   if Assigned(XGetState) then
   begin
     for var I := XPads.Count - 1 downto 0 do
@@ -854,7 +896,21 @@ end;
 
 procedure TWindowsInputBackend.Refresh;
 begin
+  RefreshDevices(True);
+end;
+
+procedure TWindowsInputBackend.RefreshIfNeeded;
+begin
+  RefreshDevices(False);
+end;
+
+procedure TWindowsInputBackend.RefreshDevices(ForceControllers: Boolean);
+begin
   var State := TWindowsState(FImpl);
+  var Message: TMsg;
+  while PeekMessage(Message, State.Window, 0, 0, PM_REMOVE) do
+    DispatchMessage(Message);
+  State.ControllersDirty := State.ControllersDirty or ForceControllers;
   State.Enumerate;
   FDevices := nil;
   for var Keyboard in State.Keyboards do
@@ -1005,6 +1061,35 @@ begin
 end;
 
 {$IFDEF FMXINPUT_TESTS}
+procedure TestWindowsDeviceRefresh;
+  procedure Check(V: Boolean; const Text: string);
+  begin if not V then raise Exception.Create(Text); end;
+begin
+  var Backend := TWindowsInputBackend.Create;
+  try
+    var State := TWindowsState(Backend.FImpl);
+    Backend.Refresh;
+    Backend.RefreshIfNeeded;
+    // Settle any startup device notifications before checking steady state.
+    var Count := State.ControllerEnumerations;
+    for var I := 1 to 3 do Backend.RefreshIfNeeded;
+    Check(State.ControllerEnumerations = Count, 'Unchanged topology rescanned DirectInput');
+    Backend.Refresh;
+    Check(State.ControllerEnumerations = Count + 1, 'Explicit refresh must rescan');
+    Count := State.ControllerEnumerations;
+    PostMessage(State.Window, $00FE, 1, 0); // Raw Input device arrival.
+    Backend.RefreshIfNeeded;
+    Check(State.ControllerEnumerations = Count + 1, 'Raw Input hotplug must rescan');
+    Count := State.ControllerEnumerations;
+    PostMessage(State.Window, WM_DEVICECHANGE, $0007, 0); // DBT_DEVNODES_CHANGED
+    Backend.RefreshIfNeeded;
+    Check(State.ControllerEnumerations = Count + 1, 'Controller hotplug must rescan');
+    Count := State.ControllerEnumerations;
+    State.KnownRawDevices := nil; // Missed message: native snapshot detects change.
+    Backend.RefreshIfNeeded;
+    Check(State.ControllerEnumerations = Count + 1, 'Topology snapshot must recover missed notification');
+  finally Backend.Free; end;
+end;
 {$I tests/WindowsMouseChecks.inc}
 {$ENDIF}
 
