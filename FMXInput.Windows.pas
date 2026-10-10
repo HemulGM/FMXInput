@@ -18,11 +18,18 @@ type
     procedure RefreshIfNeeded; override;
     function Poll: TArray<TInputValue>; override;
     procedure Reset; override;
+    function SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
+      DurationMs: UInt16): Boolean; override;
+    procedure StopRumble(const DeviceId: string = ''); override;
   end;
 
 {$IFDEF FMXINPUT_TESTS}
 procedure TestWindowsMouseInput;
 procedure TestWindowsDeviceRefresh;
+{$ENDIF}
+
+{$IFDEF FMXINPUT_RUMBLE_TESTS}
+procedure TestWindowsRumble;
 {$ENDIF}
 
 {$ENDIF}
@@ -33,7 +40,7 @@ implementation
 
 uses
   System.SysUtils, System.Classes, System.Math, System.Generics.Collections,
-  System.Win.Registry, Winapi.Windows, Winapi.Messages, Winapi.DirectInput;
+  System.SyncObjs, System.Win.Registry, Winapi.Windows, Winapi.Messages, Winapi.DirectInput;
 
 type
   TRawDevice = record
@@ -117,6 +124,39 @@ type
 
   TXInputGetState = function(Index: Cardinal; out State: TXInputState): Cardinal; stdcall;
 
+
+  TXInputVibration = record
+    LowFrequency, HighFrequency: Word;
+  end;
+
+  TXInputCapabilities = record
+    DeviceType, SubType: Byte;
+    Flags: Word;
+    Gamepad: TXInputGamepad;
+    Vibration: TXInputVibration;
+  end;
+
+  TXInputSetState = function(Index: Cardinal; var Vibration: TXInputVibration): Cardinal; stdcall;
+  TXInputGetCapabilities = function(Index, Flags: Cardinal; out Caps: TXInputCapabilities): Cardinal; stdcall;
+
+  // XInput has no native duration. This worker expires pulses independently of
+  // Poll, UI timers and rendering, and serializes expiry with renewal/cancel.
+  TXInputRumble = class(TThread)
+  private
+    FSetState: TXInputSetState;
+    FLock: TCriticalSection;
+    FWake: TEvent;
+    FDeadline: array[0..3] of UInt64;
+    procedure StopSlot(Slot: Cardinal); // Lock must be held.
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(SetState: TXInputSetState);
+    destructor Destroy; override;
+    function Pulse(Slot: Cardinal; LowFrequency, HighFrequency: Word; DurationMs: UInt16): Boolean;
+    procedure Stop(Slot: Integer = -1);
+  end;
+
   TXInputDevice = class
     Slot: Cardinal;
     Info: TInputDevice;
@@ -184,6 +224,8 @@ type
     XProducts: TDictionary<Cardinal, Boolean>;
     XModule: HMODULE;
     XGetState: TXInputGetState;
+    XGetCaps: TXInputGetCapabilities;
+    XRumble: TXInputRumble;
     KnownRawDevices: TArray<TRawDevice>;
     ControllersDirty: Boolean;
     {$IFDEF FMXINPUT_TESTS}
@@ -199,6 +241,100 @@ type
 
 var
   RawOwner: HWND;
+
+constructor TXInputRumble.Create(SetState: TXInputSetState);
+begin
+  inherited Create(False); // AfterConstruction starts after fields are ready.
+  FSetState := SetState;
+  FLock := TCriticalSection.Create;
+  FWake := TEvent.Create(nil, False, False, '');
+end;
+
+destructor TXInputRumble.Destroy;
+begin
+  Terminate;
+  if FWake <> nil then FWake.SetEvent;
+  // TThread also handles a partially constructed, not-yet-started worker.
+  inherited; // Join before freeing synchronization objects or the XInput DLL.
+  if (FLock <> nil) and (FWake <> nil) then Stop;
+  FWake.Free;
+  FLock.Free;
+end;
+
+procedure TXInputRumble.StopSlot(Slot: Cardinal);
+begin
+  if FDeadline[Slot] = 0 then Exit;
+  var Vibration := Default(TXInputVibration);
+  var Status := FSetState(Slot, Vibration);
+  if (Status = ERROR_SUCCESS) or (Status = 1167 { ERROR_DEVICE_NOT_CONNECTED }) then
+    FDeadline[Slot] := 0 // Never replay a disconnected effect on reconnect.
+  else
+    FDeadline[Slot] := TThread.GetTickCount64 + 50; // Retry a transient stop error.
+end;
+
+procedure TXInputRumble.Stop(Slot: Integer);
+begin
+  FLock.Acquire;
+  try
+    if Slot = -1 then
+      for var I := 0 to 3 do StopSlot(I)
+    else if (Slot >= 0) and (Slot <= 3) then StopSlot(Slot);
+  finally FLock.Release; end;
+  FWake.SetEvent;
+end;
+
+function TXInputRumble.Pulse(Slot: Cardinal; LowFrequency, HighFrequency: Word;
+  DurationMs: UInt16): Boolean;
+begin
+  Result := False;
+  if Slot > 3 then Exit;
+  FLock.Acquire;
+  try
+    if Terminated then Exit;
+    if (DurationMs = 0) or ((LowFrequency = 0) and (HighFrequency = 0)) then
+    begin
+      StopSlot(Slot);
+      Exit(True);
+    end;
+    var Vibration: TXInputVibration;
+    Vibration.LowFrequency := LowFrequency;
+    Vibration.HighFrequency := HighFrequency;
+    Result := FSetState(Slot, Vibration) = ERROR_SUCCESS;
+    if Result then
+      FDeadline[Slot] := TThread.GetTickCount64 + DurationMs
+    else
+      StopSlot(Slot);
+  finally FLock.Release; end;
+  FWake.SetEvent;
+end;
+
+procedure TXInputRumble.Execute;
+begin
+  while not Terminated do
+  begin
+    var Delay: Cardinal := INFINITE;
+    FLock.Acquire;
+    try
+      var Tick := TThread.GetTickCount64;
+      for var I := 0 to 3 do
+        if FDeadline[I] <> 0 then
+        begin
+          if Tick >= FDeadline[I] then StopSlot(I);
+          if FDeadline[I] <> 0 then Delay := Min(Delay, Cardinal(FDeadline[I] - Tick));
+        end;
+    finally FLock.Release; end;
+    if not Terminated then FWake.WaitFor(Delay);
+  end;
+end;
+
+function XInputHasRumble(GetCaps: TXInputGetCapabilities; Slot: Cardinal): Boolean;
+begin
+  Result := False;
+  if not Assigned(GetCaps) then Exit;
+  var Caps := Default(TXInputCapabilities);
+  if GetCaps(Slot, 0, Caps) = ERROR_SUCCESS then
+    Result := (Caps.Vibration.LowFrequency <> 0) or (Caps.Vibration.HighFrequency <> 0);
+end;
 
 constructor TKeyboard.Create;
 begin
@@ -319,7 +455,13 @@ begin
   if XModule = 0 then
     XModule := LoadLibraryEx('xinput9_1_0.dll', 0, $800);
   if XModule <> 0 then
+  begin
     XGetState := TXInputGetState(GetProcAddress(XModule, 'XInputGetState'));
+    XGetCaps := TXInputGetCapabilities(GetProcAddress(XModule, 'XInputGetCapabilities'));
+    var SetState: TXInputSetState;
+    SetState := TXInputSetState(GetProcAddress(XModule, 'XInputSetState'));
+    if Assigned(SetState) then XRumble := TXInputRumble.Create(SetState);
+  end;
   ControllersDirty := True;
   Window := AllocateHWnd(WindowProc);
   var Registration: array[0..1] of TRawRegistration;
@@ -341,6 +483,7 @@ end;
 
 destructor TWindowsState.Destroy;
 begin
+  XRumble.Free; // Join the worker and stop motors before unloading the DLL.
   if (Window <> 0) and (RawOwner = Window) then
   begin
     var Registration := Default(TRawRegistration);
@@ -840,7 +983,10 @@ begin
     begin
       var Data: TXInputState;
       if XGetState(XPads[I].Slot, Data) <> 0 then
+      begin
+        if XRumble <> nil then XRumble.Stop(XPads[I].Slot);
         XPads.Delete(I);
+      end;
     end;
     for var Slot := 0 to 3 do
     begin
@@ -860,6 +1006,7 @@ begin
       Pad.Info.Name := 'XInput controller ' + IntToStr(Slot + 1);
       Pad.Info.Kind := TInputDeviceKind.Controller;
       Pad.Info.Available := True;
+      Pad.Info.RumbleSupported := (XRumble <> nil) and XInputHasRumble(XGetCaps, Slot);
       for var Bit := 0 to 15 do
         if not (Bit in [10, 11]) then
         begin
@@ -923,8 +1070,37 @@ begin
     FDevices := FDevices + [Pad.Info];
 end;
 
+function TWindowsInputBackend.SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
+  DurationMs: UInt16): Boolean;
+begin
+  Result := False;
+  var State := TWindowsState(FImpl);
+  if State.XRumble = nil then Exit;
+  for var Pad in State.XPads do
+    if Pad.Info.Id = DeviceId then
+    begin
+      if (DurationMs = 0) or ((LowFrequency = 0) and (HighFrequency = 0)) then
+      begin
+        State.XRumble.Stop(Pad.Slot);
+        Exit(True);
+      end;
+      if not Pad.Info.Available or not Pad.Info.RumbleSupported then Exit;
+      Exit(State.XRumble.Pulse(Pad.Slot, LowFrequency, HighFrequency, DurationMs));
+    end;
+end;
+
+procedure TWindowsInputBackend.StopRumble(const DeviceId: string);
+begin
+  var State := TWindowsState(FImpl);
+  if State.XRumble = nil then Exit;
+  if DeviceId = '' then State.XRumble.Stop
+  else for var Pad in State.XPads do
+    if Pad.Info.Id = DeviceId then State.XRumble.Stop(Pad.Slot);
+end;
+
 procedure TWindowsInputBackend.Reset;
 begin
+  inherited;
   var State := TWindowsState(FImpl);
   var Message: TMsg;
   while PeekMessage(Message, State.Window, 0, 0, PM_REMOVE) do
@@ -1012,13 +1188,17 @@ begin
     for var Pad in State.XPads do
     begin
       var Data: TXInputState;
+      var WasAvailable := Pad.Info.Available;
       Pad.Info.Available := State.XGetState(Pad.Slot, Data) = 0;
       if not Pad.Info.Available then
       begin
+        if State.XRumble <> nil then State.XRumble.Stop(Pad.Slot);
         Pad.Info.Error := 'XInput controller disconnected';
         Continue;
       end;
       Pad.Info.Error := '';
+      if not WasAvailable then
+        Pad.Info.RumbleSupported := (State.XRumble <> nil) and XInputHasRumble(State.XGetCaps, Pad.Slot);
       for var Element in Pad.Info.Elements do
       begin
         var Value: Single := 0;
@@ -1091,6 +1271,10 @@ begin
   finally Backend.Free; end;
 end;
 {$I tests/WindowsMouseChecks.inc}
+{$ENDIF}
+
+{$IFDEF FMXINPUT_RUMBLE_TESTS}
+{$I FMXInput.RumbleChecks.inc}
 {$ENDIF}
 
 {$ENDIF}

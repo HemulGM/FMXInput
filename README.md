@@ -135,6 +135,40 @@ and mouse remain abstract in every mode. `RawDevices` exposes backend metadata
 for diagnostics; the demo deliberately displays only the ordinary list.
 Changing controller list mode can change controller IDs and requires rebinding.
 
+## Controller vibration
+
+`TInputDevice.RumbleSupported` indicates that the backend and driver report at
+least one vibration motor. Use the device's published `Id` when sending output:
+
+```pascal
+if Device.Available and Device.RumbleSupported then
+  Input.SetRumble(Device.Id, 32768, 16384, 100); // low/high frequency, milliseconds
+Input.StopRumble(Device.Id); // or StopRumble with no ID to stop all owned effects
+```
+
+Motor speeds range from 0 to 65535; duration is 0..65535 milliseconds. A new
+pulse replaces the previous pulse on that device. Zero duration or two zero
+speeds requests a stop. Empty IDs cannot start vibration. `SetRumble` returns
+False for unsupported/unavailable pulse targets or native output errors.
+
+The current native implementation supports **Windows XInput** controllers using
+`XInputGetCapabilities` and `XInputSetState`. Driver-reported vibration resolution
+masks determine support; the legacy `xinput9_1_0` fallback reports fixed
+capabilities. DirectInput/HID, Linux and macOS output are currently unsupported
+and safely return False. Having physical motors alone does not guarantee that
+the active driver exposes them through XInput.
+
+XInput effects expire on a separate worker even if the UI stops polling. Output
+calls, expiry and cancellation are serialized. Disconnect detection clears the
+pending effect; reconnecting does not replay it. Transient native stop errors are
+retried while the backend is alive. Backend reset/destruction, manager destruction
+(including non-owning managers), disabling input, beginning
+binding capture and clearing/removing bindings stop owned effects. All public
+manager calls use the creation thread, like input polling. Applications should
+also call `StopRumble` when pausing or losing focus. A manager must be released
+before its externally owned backend. XInput IDs identify slots, so a replacement
+controller in the same slot inherits that assignment.
+
 ## Profiles and device identity
 
 `SaveBindings(Stream)` writes a UTF-8 JSON profile. `LoadBindings(Stream)`
