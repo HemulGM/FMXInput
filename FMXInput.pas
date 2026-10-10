@@ -46,11 +46,20 @@ type
   // Missing values mean released/neutral. Calls must use the creation thread.
   // RelativeAxis is an accumulated delta consumed by each backend Poll.
   TInputBackend = class abstract
+  private
+    FPublishedValid: Boolean;
+    FPublishedMode: TInputDeviceListMode;
+    FPublishedSources, FPublishedDevices: TArray<TInputDevice>;
+    FPublishedIds: TDictionary<string, string>;
+    function PublishedDevicesCurrent: Boolean;
+    function BuildPublishedDevices: TArray<TInputDevice>;
+    procedure EnsurePublishedDevices;
   protected
     FDevices: TArray<TInputDevice>;
     function PublishValues(const Values: TArray<TInputValue>): TArray<TInputValue>;
   public
     DeviceListMode: TInputDeviceListMode; // Only affects controller interfaces; desktop input is always combined.
+    destructor Destroy; override;
     procedure Refresh; virtual; abstract;
     // Periodic discovery may use cached topology; explicit Refresh stays complete.
     procedure RefreshIfNeeded; virtual;
@@ -597,7 +606,73 @@ begin
     Result[i].Elements := Copy(Result[i].Elements);
 end;
 
+destructor TInputBackend.Destroy;
+begin
+  FPublishedIds.Free;
+  inherited;
+end;
+
+function TInputBackend.PublishedDevicesCurrent: Boolean;
+begin
+  Result := False;
+  if not FPublishedValid or (FPublishedMode <> DeviceListMode) or
+    (Length(FPublishedSources) <> Length(FDevices)) then
+    Exit;
+  // Backends can replace snapshots or update availability in place. Compare
+  // their contents so hotplug, errors and mutable element lists stay current.
+  for var I := 0 to High(FDevices) do
+  begin
+    if (FDevices[I].Id <> FPublishedSources[I].Id) or
+      (FDevices[I].Name <> FPublishedSources[I].Name) or
+      (FDevices[I].Serial <> FPublishedSources[I].Serial) or
+      (FDevices[I].Error <> FPublishedSources[I].Error) or
+      (FDevices[I].PhysicalId <> FPublishedSources[I].PhysicalId) or
+      (FDevices[I].IsVirtual <> FPublishedSources[I].IsVirtual) or
+      (FDevices[I].IsAuxiliary <> FPublishedSources[I].IsAuxiliary) or
+      (FDevices[I].Kind <> FPublishedSources[I].Kind) or
+      (FDevices[I].VendorId <> FPublishedSources[I].VendorId) or
+      (FDevices[I].ProductId <> FPublishedSources[I].ProductId) or
+      (FDevices[I].Available <> FPublishedSources[I].Available) or
+      (FDevices[I].RumbleSupported <> FPublishedSources[I].RumbleSupported) or
+      (Length(FDevices[I].Elements) <> Length(FPublishedSources[I].Elements)) then
+      Exit;
+    for var J := 0 to High(FDevices[I].Elements) do
+      if (FDevices[I].Elements[J].Kind <> FPublishedSources[I].Elements[J].Kind) or
+        (FDevices[I].Elements[J].Code <> FPublishedSources[I].Elements[J].Code) or
+        (FDevices[I].Elements[J].Name <> FPublishedSources[I].Elements[J].Name) then
+        Exit;
+  end;
+  Result := True;
+end;
+
+procedure TInputBackend.EnsurePublishedDevices;
+begin
+  if PublishedDevicesCurrent then
+    Exit;
+  FPublishedValid := False;
+  FPublishedDevices := BuildPublishedDevices;
+  if FPublishedIds = nil then
+    FPublishedIds := TDictionary<string, string>.Create;
+  FPublishedIds.Clear;
+  for var Device in FDevices do
+    for var Visible in FPublishedDevices do
+      if Visible.Id = InputDeviceId(Device, DeviceListMode) then
+        FPublishedIds.AddOrSetValue(Device.Id, Visible.Id);
+  FPublishedSources := RawDevices;
+  FPublishedMode := DeviceListMode;
+  FPublishedValid := True;
+end;
+
 function TInputBackend.Devices: TArray<TInputDevice>;
+begin
+  EnsurePublishedDevices;
+  // Public snapshots must not let callers modify the cache.
+  Result := Copy(FPublishedDevices);
+  for var I := 0 to High(Result) do
+    Result[I].Elements := Copy(Result[I].Elements);
+end;
+
+function TInputBackend.BuildPublishedDevices: TArray<TInputDevice>;
 const
   Order: array[0..2] of TInputDeviceKind = (TInputDeviceKind.Keyboard, TInputDeviceKind.Mouse, TInputDeviceKind.Controller);
 begin
@@ -655,7 +730,10 @@ begin
           var Found := False;
           for var Existing in Result[Index].Elements do
             if (Existing.Kind = E.Kind) and (Existing.Code = E.Code) then
+            begin
               Found := True;
+              Break;
+            end;
           if not Found then
             Result[Index].Elements := Result[Index].Elements + [E];
         end;
@@ -667,19 +745,14 @@ end;
 function TInputBackend.PublishValues(const Values: TArray<TInputValue>): TArray<TInputValue>;
 begin
   var Indices := TDictionary<string, Integer>.Create;
-  var Ids := TDictionary<string, string>.Create;
   var Output := TList<TInputValue>.Create;
   try
-    var published := Devices;
-    for var Device in FDevices do
-      for var Visible in published do
-        if Visible.Id = InputDeviceId(Device, DeviceListMode) then
-          Ids.AddOrSetValue(Device.Id, Visible.Id);
+    EnsurePublishedDevices;
     for var Item in Values do
     begin
       var Value := Item;
       var Id: string;
-      if not Ids.TryGetValue(Value.DeviceId, Id) then
+      if not FPublishedIds.TryGetValue(Value.DeviceId, Id) then
         Continue;
       Value.DeviceId := Id;
       var Key := InputValueKey(Id, Value.Kind, Value.Code);
@@ -702,7 +775,6 @@ begin
     Result := Output.ToArray;
   finally
     Output.Free;
-    Ids.Free;
     Indices.Free;
   end;
 end;
