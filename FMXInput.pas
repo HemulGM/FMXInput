@@ -67,8 +67,7 @@ type
     procedure Reset; virtual;
     // Finite pulse, motor speeds 0..65535. Zero duration or both speeds zero stops.
     // Unsupported/disconnected pulses return False. A new pulse replaces the old.
-    function SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
-      DurationMs: UInt16): Boolean; virtual;
+    function SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word; DurationMs: UInt16): Boolean; virtual;
     // Empty ID stops all effects owned by this backend.
     procedure StopRumble(const DeviceId: string = ''); virtual;
     function Devices: TArray<TInputDevice>;
@@ -110,8 +109,7 @@ type
     destructor Destroy; override;
     procedure Refresh;
     procedure Poll;
-    function SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
-      DurationMs: UInt16): Boolean;
+    function SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word; DurationMs: UInt16): Boolean;
     procedure StopRumble(const DeviceId: string = '');
     procedure ClearBindings;
     procedure AddBinding(const Binding: TInputBinding);
@@ -589,8 +587,7 @@ begin
   StopRumble;
 end;
 
-function TInputBackend.SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
-  DurationMs: UInt16): Boolean;
+function TInputBackend.SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word; DurationMs: UInt16): Boolean;
 begin
   Result := False;
 end;
@@ -825,7 +822,8 @@ end;
 
 destructor TInputManager.Destroy;
 begin
-  if FBackend <> nil then FBackend.StopRumble;
+  if FBackend <> nil then
+    FBackend.StopRumble;
   FActiveBindings.Free;
   FBindings.Free;
   FCaptureOrigins.Free;
@@ -970,15 +968,16 @@ begin
     FActiveBindings[i] := BindingPressed(FBindings[i], FActiveBindings[i]);
 end;
 
-function TInputManager.SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word;
-  DurationMs: UInt16): Boolean;
+function TInputManager.SetRumble(const DeviceId: string; LowFrequency, HighFrequency: Word; DurationMs: UInt16): Boolean;
 begin
   CheckThread;
   Result := False;
-  if DeviceId = '' then Exit; // Never interpret a missing target as every controller.
+  if DeviceId = '' then
+    Exit; // Never interpret a missing target as every controller.
   if (DurationMs = 0) or ((LowFrequency = 0) and (HighFrequency = 0)) then
     Exit(FBackend.SetRumble(DeviceId, LowFrequency, HighFrequency, DurationMs));
-  if not FEnabled or FCapturing then Exit;
+  if not FEnabled or FCapturing then
+    Exit;
   for var Device in FBackend.Devices do
     if (Device.Id = DeviceId) and Device.Available and Device.RumbleSupported then
       Exit(FBackend.SetRumble(DeviceId, LowFrequency, HighFrequency, DurationMs));
