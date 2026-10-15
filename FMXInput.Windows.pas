@@ -363,13 +363,12 @@ begin
   inherited;
 end;
 
-function EnumObjects(var Obj: TDIDeviceObjectInstanceW; Context: Pointer): BOOL; stdcall;
+procedure AddControllerElement(Controller: TController; const Obj: TDIDeviceObjectInstanceW; Offset: Cardinal);
 var
   Element: TInputElement;
   Range: TDIPropRange;
 begin
-  Result := DIENUM_CONTINUE;
-  var Controller := TController(Context);
+
   if (Obj.dwType and DIDFT_BUTTON) <> 0 then
     Element.Kind := TInputElementKind.Button
   else if (Obj.dwType and DIDFT_POV) <> 0 then
@@ -378,7 +377,7 @@ begin
     Element.Kind := TInputElementKind.Axis
   else
     Exit;
-  Element.Code := Obj.dwOfs;
+  Element.Code := Offset;
   Element.Name := PWideChar(@Obj.tszName[0]);
   if (Element.Code < 0) or (Element.Code >= SizeOf(TDIJoyState2)) then
     Exit;
@@ -387,7 +386,7 @@ begin
     Range := Default(TDIPropRange);
     Range.diph.dwSize := SizeOf(Range);
     Range.diph.dwHeaderSize := SizeOf(Range.diph);
-    Range.diph.dwObj := Obj.dwOfs;
+    Range.diph.dwObj := Offset;
     Range.diph.dwHow := DIPH_BYOFFSET;
     Range.lMin := 0;
     Range.lMax := 65535;
@@ -428,7 +427,18 @@ begin
     Controller.Info.Available := Succeeded(Status);
     if Controller.Info.Available then
     begin
-      Controller.Device.EnumObjects(EnumObjects, Controller, DIDFT_ALL);
+      // EnumObjects.dwOfs describes the native device layout, even after
+      // SetDataFormat. Resolve the actual objects at our DIJOYSTATE2 offsets.
+      // Keep these offsets as binding codes, preserving existing axis mappings.
+      for var I := 0 to Integer(c_dfDIJoystick2.dwNumObjs) - 1 do
+      begin
+        var Format := PDIObjectDataFormat(PByte(c_dfDIJoystick2.rgodf) +
+          NativeUInt(I) * c_dfDIJoystick2.dwObjSize);
+        var Obj := Default(TDIDeviceObjectInstanceW);
+        Obj.dwSize := SizeOf(Obj);
+        if Succeeded(Controller.Device.GetObjectInfo(Obj, Format.dwOfs, DIPH_BYOFFSET)) then
+          AddControllerElement(Controller, Obj, Format.dwOfs);
+      end;
       Controller.Device.Acquire;
     end
     else
